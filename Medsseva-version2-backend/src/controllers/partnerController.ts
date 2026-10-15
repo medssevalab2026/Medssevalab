@@ -1,0 +1,1651 @@
+import { Request, Response } from 'express';
+import { prisma } from '../lib/prisma';
+import { sendNotificationToUser } from '../services/notification.service';
+import { paymentService } from '../services/payment.service';
+import {
+  getBookingLocation,
+  getCollectorContext,
+  isBookingWithinCollectorRadius,
+} from '../services/bookingAssignment.service';
+
+export async function getOrFindPartner(userId: string, userRole?: string) {
+  let partner = await prisma.pathologyPartner.findUnique({ where: { userId } });
+  if (!partner) {
+    const userRec = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { adminUser: true }
+    });
+    if (userRec) {
+      partner = await prisma.pathologyPartner.create({
+        data: {
+          userId: userRec.id,
+          labName: `${userRec.name || 'Phlebotomist'} (Collector)`,
+          role: 'PHLEBOTOMIST',
+          approvalStatus: 'APPROVED',
+          isAvailable: true,
+          commissionRate: 30.0,
+          branchId: userRec.adminUser?.branchId || undefined,
+        }
+      }).catch(async () => {
+        return prisma.pathologyPartner.findUnique({ where: { userId } });
+      });
+    }
+  }
+  return partner;
+}
+
+export const getPartnerBookings = async (req: any, res: Response) => {
+  try {
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+    if (!partner && req.user.role !== 'EXECUTIVE') {
+      return res.status(404).json({ error: 'Partner profile not found.' });
+    }
+
+    const whereOr: any[] = [
+      { assignedExecutiveId: req.user.id },
+      { paymentReceivedById: req.user.id },
+    ];
+    if (partner) whereOr.push({ assignedPartnerId: partner.id });
+
+    const bookings = await prisma.booking.findMany({
+      where: { OR: whereOr },
+      include: {
+        user: { select: { name: true, mobile: true } },
+        tests: { include: { test: { select: { name: true } } } },
+        packages: { include: { package: { select: { name: true } } } },
+        statusTimeline: { orderBy: { createdAt: 'asc' } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+  const formatted = await Promise.all(bookings.map(async (b) => {
+      const address = await prisma.address.findUnique({ where: { id: b.addressId } });
+      return {
+        id: b.id,
+        bookingCode: b.bookingCode,
+        status: b.status,
+        patientName: b.patientName,
+        patientAge: b.patientAge,
+        patientGender: b.patientGender,
+        patientMobile: b.patientMobile,
+        scheduledDate: b.scheduledDate,
+        scheduledSlot: b.scheduledSlot,
+        totalPaid: b.totalPaid,
+        paymentStatus: b.paymentStatus,
+        paymentMode: b.paymentMode,
+        collectionMode: b.collectionMode,
+        collectionOtp: b.collectionOtp,
+        otpVerified: b.otpVerified,
+        assignedPartnerId: b.assignedPartnerId,
+        collectionStartedAt: b.collectionStartedAt,
+        sampleCollectedAt: b.sampleCollectedAt,
+        deliveredToLabAt: b.deliveredToLabAt,
+        collectionAddress: address
+          ? [address.line1, address.line2, address.city, address.pincode].filter(Boolean).join(', ')
+          : null,
+        tests: b.tests.map(t => ({ name: t.test.name })),
+        packages: b.packages.map(p => ({ name: p.package.name })),
+        statusTimeline: b.statusTimeline,
+      };
+    }));
+
+    res.json(formatted);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to fetch bookings', details: error.message });
+  }
+};
+
+// broadcast notifications - WAITING_FOR_PARTNER bookings filtered by 3km service radius
+export const getPartnerNotifications = async (req: any, res: Response) => {
+  try {
+    const collector = await getCollectorContext(req.user.id);
+
+    if (!collector.isApproved) {
+      return res.status(403).json({ error: 'Collector profile not found or not approved.' });
+    }
+
+    if (collector.partnerId && !collector.isAvailable) {
+      return res.json([]);
+    }
+
+    if (!collector.latitude || !collector.longitude) {
+      return res.json([]);
+    }
+
+    const excludedIds = collector.partnerId
+      ? (await prisma.bookingRejection.findMany({ where: { partnerId: collector.partnerId }, select: { bookingId: true } })).map(r => r.bookingId)
+      : [];
+
+    const bookings = await prisma.booking.findMany({
+      where: {
+        collectionMode: 'HOME',
+        status: 'WAITING_FOR_PARTNER',
+        id: { notIn: excludedIds },
+      },
+      include: {
+        tests: { include: { test: { select: { name: true } } } },
+        packages: { include: { package: { select: { name: true } } } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const formatted = (await Promise.all(bookings.map(async (b) => {
+      const location = await getBookingLocation(b.addressId);
+      const withinRadius = isBookingWithinCollectorRadius(
+        location,
+        collector.latitude,
+        collector.longitude,
+        collector.radiusKm
+      );
+      if (!withinRadius) return null;
+
+      const address = b.addressId
+        ? await prisma.address.findUnique({ where: { id: b.addressId } })
+        : null;
+
+      return {
+        id: b.id,
+        bookingCode: b.bookingCode,
+        patientName: b.patientName,
+        patientMobile: b.patientMobile,
+        scheduledDate: b.scheduledDate,
+        scheduledSlot: b.scheduledSlot,
+        totalPaid: b.totalPaid,
+        status: b.status,
+        collectionAddress: address ? `${address.line1}, ${address.city}` : null,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        tests: b.tests.map(t => ({ name: t.test.name })),
+        packages: b.packages.map(p => ({ name: p.package.name })),
+      };
+    }))).filter(Boolean);
+
+    res.json(formatted);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to fetch notifications', details: error.message });
+  }
+};
+
+export const acceptBooking = async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const partner = await prisma.pathologyPartner.findUnique({ where: { userId: req.user.id } });
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+
+    if (!partner && (!user || (user.role as string) !== 'EXECUTIVE')) {
+      return res.status(404).json({ error: 'Collector profile not found.' });
+    }
+
+    if (partner && partner.approvalStatus !== 'APPROVED') {
+      return res.status(403).json({ error: 'Partner not approved.' });
+    }
+
+    const existing = await prisma.booking.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'Booking not found.' });
+
+    // Internal branch orders directly assigned to this staff or their lab bypass the open-pool radius restriction
+    const isDirectlyAssignedToCollector =
+      existing.assignedExecutiveId === req.user.id ||
+      (partner && existing.assignedPartnerId === partner.id);
+
+    if (existing.addressId && !isDirectlyAssignedToCollector) {
+      const collector = await getCollectorContext(req.user.id);
+      const location = await getBookingLocation(existing.addressId);
+      const withinRadius = isBookingWithinCollectorRadius(
+        location,
+        collector.latitude,
+        collector.longitude,
+        collector.radiusKm
+      );
+
+      if (!withinRadius) {
+        return res.status(403).json({ error: 'Booking address is outside your 3 km service radius.' });
+      }
+    }
+
+    if (existing.status === 'ACCEPTED' && ((partner && existing.assignedPartnerId === partner.id) || existing.assignedExecutiveId === req.user.id)) {
+      const confirmedBooking = await prisma.booking.findUnique({ where: { id } });
+      return res.json(confirmedBooking);
+    }
+
+    const updateData: any = {
+      status: 'ACCEPTED',
+      partnerAcceptedAt: new Date(),
+      assignedExecutiveId: req.user.id,
+    };
+    if (partner) {
+      updateData.assignedPartnerId = partner.id;
+      updateData.partnerAssignedAt = new Date();
+    }
+
+    const updated = await prisma.booking.updateMany({
+      where: { id, status: { in: ['WAITING_FOR_PARTNER', 'ASSIGNED'] } },
+      data: updateData,
+    });
+
+    if (updated.count === 0) {
+      return res.status(409).json({ error: 'Booking already accepted by another collector.' });
+    }
+
+    await prisma.bookingStatusLog.create({
+      data: {
+        bookingId: id,
+        status: 'ACCEPTED',
+        note: partner ? `Accepted by partner ${partner.id}` : `Accepted by executive ${req.user.id}`,
+        updatedBy: req.user.id,
+      }
+    });
+
+    const booking = await prisma.booking.findUnique({ where: { id } });
+
+    if (booking && !booking.collectionOtp) {
+      const otp = Math.floor(1000 + Math.random() * 9000).toString();
+      await prisma.booking.update({
+        where: { id },
+        data: { collectionOtp: otp },
+      });
+    }
+
+    const updatedBooking = await prisma.booking.findUnique({ where: { id } });
+    if (updatedBooking) {
+      sendNotificationToUser(updatedBooking.userId, 'Booking Accepted', 'Your booking has been accepted.', 'BOOKING_ACCEPTED', { bookingId: id }).catch(console.error);
+    }
+
+    res.json(updatedBooking);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to accept booking', details: error.message });
+  }
+};
+
+export const rejectBooking = async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!partner && (!user || (user.role as string) !== 'EXECUTIVE')) {
+      return res.status(404).json({ error: 'Collector profile not found.' });
+    }
+
+    const booking = await prisma.booking.findUnique({ where: { id } });
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+
+    const canReject = booking.status === 'WAITING_FOR_PARTNER' ||
+      (booking.status === 'ACCEPTED' && booking.assignedPartnerId === partner?.id);
+
+    if (!canReject) {
+      return res.status(400).json({ error: 'Booking cannot be rejected at this stage.' });
+    }
+
+   
+    if (partner && booking.status === 'ACCEPTED' && booking.assignedPartnerId === partner.id) {
+      await prisma.booking.update({
+        where: { id },
+        data: {
+          status: 'WAITING_FOR_PARTNER',
+          assignedPartnerId: null,
+          partnerAssignedAt: null,
+          partnerAcceptedAt: null,
+          collectionOtp: null,
+        },
+      });
+    }
+
+    if (partner) {
+      await prisma.bookingRejection.upsert({
+        where: { bookingId_partnerId: { bookingId: id, partnerId: partner.id } },
+        update: { reason: reason || null },
+        create: { bookingId: id, partnerId: partner.id, reason: reason || null },
+      });
+    }
+
+    await prisma.bookingStatusLog.create({
+      data: {
+        bookingId: id,
+        status: 'WAITING_FOR_PARTNER',
+        note: reason
+          ? `Rejected by partner ${partner?.id || req.user.id}: ${reason}`
+          : `Rejected by partner ${partner?.id || req.user.id}`,
+        updatedBy: req.user.id,
+      }
+    });
+
+
+    const [totalEligible, totalRejections] = await Promise.all([
+      prisma.pathologyPartner.count({
+        where: { approvalStatus: 'APPROVED', isAvailable: true }
+      }),
+      prisma.bookingRejection.count({ where: { bookingId: id } }),
+    ]);
+
+    if (totalEligible > 0 && totalRejections >= totalEligible) {
+    
+      console.warn(`All partners rejected booking ${id}. Admin manual assignment required.`);
+   
+    }
+
+const rejectedBooking = await prisma.booking.findUnique({ where: { id } });
+    if (rejectedBooking) {
+      sendNotificationToUser(rejectedBooking.userId, 'Booking Update', 'Unfortunately your booking could not be accepted.', 'BOOKING_REJECTED', { bookingId: id }).catch(console.error);
+    }
+
+    res.json({ message: 'Booking rejected successfully.' });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to reject booking', details: error.message });
+  }
+};
+
+const VALID_PARTNER_STATUSES = [
+  'ON_THE_WAY', 'REACHED_LOCATION', 'SAMPLE_COLLECTED', 'DELIVERING_TO_BRANCH', 'DELIVERED_TO_LAB', 'PROCESSING'
+];
+export const updateBookingStatus = async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { status, note } = req.body;
+
+    if (!VALID_PARTNER_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_PARTNER_STATUSES.join(', ')}` });
+    }
+
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+
+    const booking = await prisma.booking.findUnique({ where: { id } });
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+
+    const isAssigned = (partner && booking.assignedPartnerId === partner.id) ||
+      booking.assignedExecutiveId === req.user.id ||
+      ['ACCEPTED', 'ON_THE_WAY', 'REACHED_LOCATION', 'SAMPLE_COLLECTED', 'DELIVERING_TO_BRANCH'].includes(booking.status);
+    if (!isAssigned) {
+      return res.status(403).json({ error: 'This booking is not assigned to you.' });
+    }
+
+    // Gate: SAMPLE_COLLECTED requires OTP verified + payment received
+    if (status === 'SAMPLE_COLLECTED') {
+      if (!booking.otpVerified && booking.paymentStatus !== 'SUCCESS') {
+        return res.status(400).json({ error: 'OTP must be verified before collecting sample.' });
+      }
+      if (booking.paymentStatus !== 'SUCCESS') {
+        return res.status(400).json({ error: 'Payment must be collected before marking sample collected.' });
+      }
+    }
+
+    const timestampField: Record<string, string> = {
+      ON_THE_WAY: 'collectionStartedAt',
+      SAMPLE_COLLECTED: 'sampleCollectedAt',
+      DELIVERED_TO_LAB: 'deliveredToLabAt',
+    };
+
+    const updateData: any = { status };
+    if (timestampField[status]) {
+      updateData[timestampField[status]] = new Date();
+    }
+    if (status === 'SAMPLE_COLLECTED') {
+      updateData.partnerNote = note || null;
+    }
+    if (status === 'DELIVERED_TO_LAB') {
+      updateData.status = 'DELIVERED_TO_LAB';
+      if (partner) {
+        await prisma.pathologyPartner.update({
+          where: { id: partner.id },
+          data: { totalCollections: { increment: 1 } }
+        });
+
+        // Check if phlebotomist is an in-house employee/staff
+        const collectorUserId = req.user?.id || partner.userId;
+        let isEmployeeStaff = false;
+        if (collectorUserId) {
+          const adminUserRecord = await prisma.adminUser.findUnique({
+            where: { userId: collectorUserId },
+            include: { role: true }
+          });
+          isEmployeeStaff = !!(
+            adminUserRecord && (
+              adminUserRecord.userType === 'EMPLOYEE' ||
+              adminUserRecord.userType === 'STAFF' ||
+              adminUserRecord.branchId ||
+              adminUserRecord.role?.slug === 'executive' ||
+              (adminUserRecord.designation && /phlebotomist|collector|phlebo|staff|employee/i.test(adminUserRecord.designation)) ||
+              (adminUserRecord.department && /phlebotom|sample collection/i.test(adminUserRecord.department))
+            )
+          );
+        }
+
+        // Record 30% commission ONLY for freelance phlebotomist (NOT for staff/employee)
+        if (!isEmployeeStaff) {
+          try {
+            const commRate = partner.commissionRate || 30.0;
+            const testAmt = booking.totalPaid || 0;
+            const commAmt = Math.round((testAmt * commRate) / 100);
+
+            const existingComm = await (prisma as any).referralCommission.findFirst({
+              where: { bookingId: id, entityType: 'PARTNER' }
+            });
+
+            if (!existingComm) {
+              await (prisma as any).referralCommission.create({
+                data: {
+                  bookingId: id,
+                  entityType: 'PARTNER',
+                  partnerId: partner.id,
+                  bookingCode: booking.bookingCode,
+                  patientName: booking.patientName,
+                  testName: 'Sample Collection & Investigation',
+                  testAmount: testAmt,
+                  commissionRate: commRate,
+                  commissionAmount: commAmt,
+                  paymentCycle: partner.paymentCycle || 'WEEKLY',
+                  status: 'UNPAID',
+                }
+              });
+            }
+          } catch (commErr: any) {
+            console.error('Failed to create partner commission record:', commErr.message);
+          }
+        } else {
+          console.log(`[DELIVERED_TO_LAB] Collector ${collectorUserId} is in-house staff/employee phlebotomist. Skipping 30% commission record.`);
+        }
+      }
+    }
+
+    const updated = await prisma.booking.update({ where: { id }, data: updateData });
+
+    await prisma.bookingStatusLog.create({
+      data: { bookingId: id, status: status as any, note: note || null, updatedBy: req.user.id }
+    });
+
+    const notifMap: Record<string, { title: string; body: string; type: any }> = {
+      ON_THE_WAY: { title: 'Partner On The Way', body: 'Your sample collection executive is on the way.', type: 'PARTNER_ON_THE_WAY' },
+      REACHED_LOCATION: { title: 'Partner Arrived', body: 'Your sample collection executive has arrived.', type: 'PARTNER_ARRIVED' },
+      SAMPLE_COLLECTED: { title: 'Sample Collected', body: 'Sample collected successfully.', type: 'SAMPLE_COLLECTED' },
+      DELIVERED_TO_LAB: { title: 'Sample Received in Lab', body: 'Your sample has reached the laboratory.', type: 'SAMPLE_RECEIVED_IN_LAB' },
+    };
+
+    const notif = notifMap[status];
+    if (notif) {
+      sendNotificationToUser(booking.userId, notif.title, notif.body, notif.type, { bookingId: id }).catch(console.error);
+    }
+
+    res.json(updated);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to update status', details: error.message });
+  }
+};
+
+export const selectDeliveryBranch = async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    let { branchId } = req.body;
+
+    // Auto-resolve branch for in-house employee if branchId omitted or passed as 'auto'
+    if (!branchId || branchId === 'auto') {
+      const booking = await prisma.booking.findUnique({ where: { id } });
+      if (booking?.branchId) {
+        branchId = booking.branchId;
+      } else {
+        const partner = await prisma.pathologyPartner.findUnique({ where: { userId: req.user.id } });
+        if (partner?.branchId) {
+          branchId = partner.branchId;
+        } else {
+          const adminUser = await prisma.adminUser.findFirst({ where: { userId: req.user.id, isActive: true } });
+          if (adminUser?.branchId) {
+            branchId = adminUser.branchId;
+          }
+        }
+      }
+    }
+
+    if (!branchId) {
+      return res.status(400).json({ error: 'branchId is required.' });
+    }
+
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+
+    const booking = await prisma.booking.findUnique({ where: { id } });
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+
+    const branch = await prisma.branch.findUnique({ where: { id: branchId } });
+    if (!branch || !branch.isActive) {
+      return res.status(400).json({ error: 'Selected branch is invalid or inactive.' });
+    }
+
+    const effectivePartnerId = partner?.id || booking.assignedPartnerId || undefined;
+
+    try {
+      if ((prisma as any).sampleDelivery) {
+        const existing = await (prisma as any).sampleDelivery.findUnique({ where: { bookingId: id } });
+        if (existing) {
+          await (prisma as any).sampleDelivery.update({
+            where: { bookingId: id },
+            data: { branchId, selectedAt: new Date(), status: 'SELECTED' },
+          });
+        } else if (effectivePartnerId) {
+          await (prisma as any).sampleDelivery.create({
+            data: {
+              bookingId: id,
+              partnerId: effectivePartnerId,
+              branchId,
+              status: 'SELECTED',
+            },
+          });
+        }
+      }
+    } catch (deliveryErr: any) {
+      console.warn('Sample delivery record notice:', deliveryErr.message);
+    }
+
+    const updated = await prisma.booking.update({
+      where: { id },
+      data: {
+        status: 'DELIVERING_TO_BRANCH',
+        branchId: branchId,
+      },
+    });
+
+    await prisma.bookingStatusLog.create({
+      data: {
+        bookingId: id,
+        status: 'DELIVERING_TO_BRANCH',
+        note: `Delivery branch selected: ${branch.name} (${branch.city})`,
+        updatedBy: req.user?.id || 'SYSTEM',
+      },
+    });
+
+    res.json({ success: true, booking: updated, branch });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to select delivery branch', details: error.message });
+  }
+};
+
+export const confirmBranchDelivery = async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+
+    const booking = await prisma.booking.findUnique({ where: { id } });
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+
+    try {
+      if ((prisma as any).sampleDelivery) {
+        const delivery = await (prisma as any).sampleDelivery.findUnique({ where: { bookingId: id } });
+        if (delivery) {
+          await (prisma as any).sampleDelivery.update({
+            where: { bookingId: id },
+            data: {
+              deliveryStartedAt: delivery.deliveryStartedAt ?? new Date(),
+              deliveredAt: new Date(),
+              status: 'DELIVERED',
+            },
+          });
+        }
+      }
+    } catch (err: any) {
+      console.warn('Delivery update notice:', err.message);
+    }
+
+    const updated = await prisma.booking.update({
+      where: { id },
+      data: {
+        status: 'DELIVERED_TO_LAB',
+        deliveredToLabAt: new Date(),
+      },
+    });
+
+    if (partner) {
+      await prisma.pathologyPartner.update({
+        where: { id: partner.id },
+        data: { totalCollections: { increment: 1 } },
+      }).catch(() => {});
+    }
+
+    await prisma.bookingStatusLog.create({
+      data: {
+        bookingId: id,
+        status: 'DELIVERED_TO_LAB',
+        note: 'Sample delivered to selected branch by collector',
+        updatedBy: req.user?.id || 'SYSTEM',
+      },
+    });
+
+    sendNotificationToUser(
+      booking.userId,
+      'Sample Received in Lab',
+      'Your sample has reached the laboratory.',
+      'SAMPLE_RECEIVED_IN_LAB',
+      { bookingId: id }
+    ).catch(console.error);
+
+    res.json({ success: true, booking: updated });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to confirm delivery', details: error.message });
+  }
+};
+
+export const getDeliveryBranches = async (req: any, res: Response) => {
+  try {
+    const { bookingId, city: queryCity } = req.query;
+
+    let targetCity: string | null = (typeof queryCity === 'string' && queryCity.trim()) ? queryCity.trim() : null;
+
+    // 1. If not provided in query, attempt to derive from booking
+    if (!targetCity && bookingId) {
+      const booking = await prisma.booking.findUnique({
+        where: { id: String(bookingId) },
+        select: {
+          addressId: true,
+          branchId: true,
+          branch: { select: { city: true } },
+        },
+      });
+
+      if (booking?.branch?.city) {
+        targetCity = booking.branch.city;
+      } else if (booking?.addressId) {
+        const addr = await prisma.address.findUnique({ where: { id: booking.addressId } });
+        if (addr) {
+          targetCity = addr.city || addr.line1 || null;
+          if (targetCity === 'Unknown') {
+            targetCity = addr.line1 || null;
+          }
+        }
+      }
+    }
+
+    // 2. If still no city, check collector's profile / address
+    if (!targetCity && req.user?.id) {
+      const partner = await prisma.pathologyPartner.findUnique({
+        where: { userId: req.user.id },
+        select: { city: true, address: true, branchId: true },
+      });
+      if (partner?.city) {
+        targetCity = partner.city;
+      } else if (partner?.branchId) {
+        const b = await prisma.branch.findUnique({ where: { id: partner.branchId }, select: { city: true } });
+        if (b?.city) targetCity = b.city;
+      } else if (partner?.address) {
+        targetCity = partner.address;
+      } else {
+        const adminUser = await prisma.adminUser.findFirst({
+          where: { userId: req.user.id, isActive: true },
+          include: { branch: true },
+        });
+        if (adminUser?.branch?.city) {
+          targetCity = adminUser.branch.city;
+        }
+      }
+    }
+
+    // Fetch all active branches
+    const allBranches = await prisma.branch.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        name: true,
+        city: true,
+        line1: true,
+        pincode: true,
+        contactNumber: true,
+        workingHours: true,
+        latitude: true,
+        longitude: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    // If targetCity is found, strictly filter branches belonging to that city
+    let filteredBranches = allBranches;
+    if (targetCity) {
+      const cleanTarget = targetCity.toLowerCase();
+      const matched = allBranches.filter(b => {
+        if (!b.city) return false;
+        const bCity = b.city.toLowerCase().trim();
+        return cleanTarget.includes(bCity) || bCity.includes(cleanTarget);
+      });
+
+      if (matched.length > 0) {
+        filteredBranches = matched;
+      }
+    }
+
+    res.json(filteredBranches);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to fetch branches', details: error.message });
+  }
+};
+
+export const collectCash = async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+
+    const booking = await prisma.booking.findUnique({ where: { id } });
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+
+    const isAssigned = (partner && booking.assignedPartnerId === partner.id) ||
+      booking.assignedExecutiveId === req.user.id ||
+      ['ACCEPTED', 'ON_THE_WAY', 'REACHED_LOCATION', 'SAMPLE_COLLECTED'].includes(booking.status);
+    if (!isAssigned) {
+      return res.status(403).json({ error: 'This booking is not assigned to you.' });
+    }
+    if (!booking.otpVerified) {
+      return res.status(400).json({ error: 'OTP must be verified before collecting payment.' });
+    }
+    if (booking.paymentStatus === 'SUCCESS') {
+      return res.status(400).json({ error: 'Payment has already been collected for this booking.' });
+    }
+
+    const updated = await prisma.booking.update({
+      where: { id },
+      data: {
+        paymentStatus: 'SUCCESS',
+        paymentMode: 'CASH',
+        paymentReceivedAt: new Date(),
+        paymentReceivedById: req.user.id,
+      },
+    });
+
+    await prisma.bookingStatusLog.create({
+      data: {
+        bookingId: id,
+        status: booking.status as any,
+        note: 'Cash collected by collector at doorstep',
+        updatedBy: req.user.id,
+      }
+    });
+
+    const existingPayment = await prisma.payment.findUnique({ where: { bookingId: id } });
+    if (!existingPayment) {
+      await prisma.payment.create({
+        data: {
+          bookingId: id,
+          amount: booking.totalPaid,
+          currency: 'INR',
+          gateway: 'CASH',
+          method: 'cash',
+          status: 'CAPTURED',
+          paidAt: new Date(),
+        },
+      });
+    } else {
+      await prisma.payment.update({
+        where: { bookingId: id },
+        data: { status: 'CAPTURED', method: 'cash', gateway: 'CASH', paidAt: new Date() },
+      });
+    }
+
+    paymentService.runPostPaymentJobs(id, booking.userId).catch(console.error);
+
+    res.json({ success: true, paymentStatus: 'SUCCESS', paymentMode: 'CASH', booking: updated });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to collect cash', details: error.message });
+  }
+};
+export const initiateUpiCollection = async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+
+    const booking = await prisma.booking.findUnique({ where: { id }, include: { user: true } });
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+
+    const isAssigned = (partner && booking.assignedPartnerId === partner.id) ||
+      booking.assignedExecutiveId === req.user.id ||
+      ['ACCEPTED', 'ON_THE_WAY', 'REACHED_LOCATION', 'SAMPLE_COLLECTED'].includes(booking.status);
+    if (!isAssigned) {
+      return res.status(403).json({ error: 'This booking is not assigned to you.' });
+    }
+    if (!booking.otpVerified) {
+      return res.status(400).json({ error: 'OTP must be verified before initiating UPI payment.' });
+    }
+    if (booking.paymentStatus === 'SUCCESS') {
+      return res.status(400).json({ error: 'Payment has already been collected.' });
+    }
+
+    const amountPaise = Math.round(Number(booking.totalPaid) * 100);
+    if (!amountPaise || amountPaise <= 0) {
+      return res.status(400).json({ error: 'Booking has an invalid payment amount.' });
+    }
+
+    if (booking.paymentLinkUrl) {
+      const existingPayment = await prisma.payment.findUnique({ where: { bookingId: id } });
+      if (!existingPayment) {
+        await prisma.payment.create({
+          data: {
+            bookingId: id,
+            amount: booking.totalPaid,
+            status: 'PENDING',
+          },
+        });
+      }
+      return res.json({
+        upiString: booking.paymentLinkUrl,
+        amount: booking.totalPaid,
+        bookingCode: booking.bookingCode,
+        patientName: booking.patientName,
+      });
+    }
+
+    const Razorpay = require('razorpay');
+    const razorpay = new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID,
+      key_secret: process.env.RAZORPAY_KEY_SECRET,
+    });
+
+    const paymentLink = await razorpay.paymentLink.create({
+      amount: amountPaise,
+      currency: 'INR',
+      accept_partial: false,
+      description: `MedSeva Booking #${booking.bookingCode}`,
+      customer: {
+        name: booking.patientName,
+        contact: booking.patientMobile || booking.user?.mobile || '',
+      },
+      notify: { sms: false, email: false },
+      reminder_enable: false,
+      upi_link: true,
+      reference_id: booking.bookingCode,
+      notes: {
+        bookingId: id,
+        bookingCode: booking.bookingCode,
+      },
+    });
+
+    await prisma.booking.update({
+      where: { id },
+      data: {
+        paymentLinkId: paymentLink.id,
+        paymentLinkUrl: paymentLink.short_url,
+      },
+    });
+
+    const invoiceNumber = `INV-${Date.now()}-${booking.bookingCode}`;
+    const existingPayment = await prisma.payment.findUnique({ where: { bookingId: id } });
+    if (!existingPayment) {
+      await prisma.payment.create({
+        data: {
+          bookingId: id,
+          amount: booking.totalPaid,
+          invoiceNumber,
+          status: 'PENDING',
+        },
+      });
+    }
+
+    res.json({
+      upiString: paymentLink.short_url,
+      amount: booking.totalPaid,
+      bookingCode: booking.bookingCode,
+      patientName: booking.patientName,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to initiate UPI collection',
+      details: error?.message ?? 'Unknown error',
+    });
+  }
+};
+export const checkUpiPaymentStatus = async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+
+    const booking = await prisma.booking.findUnique({ where: { id } });
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+
+    const isAssigned = (partner && booking.assignedPartnerId === partner.id) || booking.assignedExecutiveId === req.user.id;
+    if (!isAssigned) {
+      return res.status(403).json({ error: 'Not your booking.' });
+    }
+
+    if (booking.paymentStatus === 'SUCCESS') {
+      return res.json({ paymentStatus: 'SUCCESS' });
+    }
+
+    res.json({ paymentStatus: 'PENDING', message: 'Waiting for patient to scan and pay.' });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to check UPI payment status', details: error.message });
+  }
+};
+export const verifyUpiPayment = async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res.status(400).json({ error: 'razorpay_order_id, razorpay_payment_id, and razorpay_signature are required.' });
+    }
+
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+
+    const booking = await prisma.booking.findUnique({ where: { id } });
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+
+    const isAssigned = (partner && booking.assignedPartnerId === partner.id) || booking.assignedExecutiveId === req.user.id;
+    if (!isAssigned) {
+      return res.status(403).json({ error: 'This booking is not assigned to you.' });
+    }
+    if (booking.paymentStatus === 'SUCCESS') {
+      return res.json({ success: true, paymentStatus: 'SUCCESS' });
+    }
+
+    const crypto = require('crypto');
+    const body = razorpay_order_id + '|' + razorpay_payment_id;
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET!)
+      .update(body)
+      .digest('hex');
+
+    if (expectedSignature !== razorpay_signature) {
+      return res.status(400).json({ error: 'Invalid payment signature.' });
+    }
+
+    await prisma.payment.updateMany({
+      where: { bookingId: id },
+      data: {
+        razorpayPaymentId: razorpay_payment_id,
+        razorpaySignature: razorpay_signature,
+        status: 'CAPTURED',
+        method: 'upi',
+        paidAt: new Date(),
+        webhookVerified: false,
+      },
+    });
+
+    await prisma.booking.update({
+      where: { id },
+      data: {
+        paymentStatus: 'SUCCESS',
+        paymentMode: 'UPI',
+        paymentId: razorpay_payment_id,
+        paymentReceivedAt: new Date(),
+        paymentReceivedById: req.user.id,
+      },
+    });
+
+await prisma.bookingStatusLog.create({
+      data: {
+        bookingId: id,
+        status: booking.status as any,
+        note: 'UPI payment verified and received via partner app',
+        updatedBy: req.user.id,
+      },
+    });
+
+    paymentService.runPostPaymentJobs(id, booking.userId).catch(console.error);
+
+    res.json({ success: true, paymentStatus: 'SUCCESS' });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to verify UPI payment', details: error.message });
+  }
+};
+
+export const toggleAvailability = async (req: any, res: Response) => {
+  try {
+    const { isAvailable, latitude, longitude } = req.body;
+    if (typeof isAvailable !== 'boolean') {
+      return res.status(400).json({ error: 'isAvailable must be a boolean.' });
+    }
+
+    const updateData: any = { isAvailable };
+    if (latitude != null && longitude != null && !isNaN(Number(latitude)) && !isNaN(Number(longitude))) {
+      updateData.latitude = Number(latitude);
+      updateData.longitude = Number(longitude);
+    }
+
+    await prisma.pathologyPartner.updateMany({
+      where: { userId: req.user.id },
+      data: updateData,
+    });
+
+    if (updateData.latitude != null) {
+      await prisma.adminUser.updateMany({
+        where: { userId: req.user.id },
+        data: { latitude: updateData.latitude, longitude: updateData.longitude },
+      });
+    }
+
+    res.json({ isAvailable });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to update availability', details: error.message });
+  }
+};
+
+export const getPartnerProfile = async (req: any, res: Response) => {
+  try {
+    let partner = await getOrFindPartner(req.user.id, req.user.role);
+    if (!partner) {
+      const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+      if (user) {
+        return res.json({
+          id: user.id,
+          userId: user.id,
+          name: user.name,
+          email: user.email,
+          mobile: user.mobile,
+          avatarUrl: user.avatarUrl,
+          role: 'PHLEBOTOMIST',
+          isAvailable: true,
+          approvalStatus: 'APPROVED',
+          commissionRate: 30.0,
+        });
+      }
+      return res.status(404).json({ error: 'Partner profile not found.' });
+    }
+
+    const partnerWithUser = await prisma.pathologyPartner.findUnique({
+      where: { id: partner.id },
+      include: {
+        user: { select: { name: true, email: true, mobile: true, avatarUrl: true } }
+      }
+    });
+
+    res.json({
+      ...partnerWithUser,
+      name: partnerWithUser?.user?.name,
+      email: partnerWithUser?.user?.email,
+      mobile: partnerWithUser?.user?.mobile,
+      avatarUrl: partnerWithUser?.user?.avatarUrl,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to fetch profile', details: error.message });
+  }
+};
+
+export const getPartnerHistory = async (req: any, res: Response) => {
+  try {
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+    const partnerId = partner?.id;
+
+    const whereCollector: any[] = [
+      { assignedExecutiveId: req.user.id },
+      { paymentReceivedById: req.user.id },
+    ];
+    if (partnerId) whereCollector.push({ assignedPartnerId: partnerId });
+
+    // Bookings this partner completed or was assigned to (any terminal status)
+    const assignedBookings = await prisma.booking.findMany({
+      where: {
+        OR: whereCollector,
+        status: { in: ['DELIVERED_TO_LAB', 'PROCESSING', 'REPORT_READY', 'COMPLETED', 'CANCELLED'] },
+      },
+      include: {
+        tests: { include: { test: { select: { name: true } } } },
+        packages: { include: { package: { select: { name: true } } } },
+        assignedExecutive: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Bookings this partner explicitly rejected
+    const rejections = partnerId ? await prisma.bookingRejection.findMany({
+      where: { partnerId },
+      include: {
+        booking: {
+          include: {
+            tests: { include: { test: { select: { name: true } } } },
+            packages: { include: { package: { select: { name: true } } } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    }) : [];
+
+const assignedFormatted = await Promise.all(assignedBookings.map(async (b) => {
+      const address = await prisma.address.findUnique({ where: { id: b.addressId } });
+      return {
+        id: b.id,
+        bookingCode: b.bookingCode,
+        patientName: b.patientName,
+        patientAge: b.patientAge,
+        patientGender: b.patientGender,
+        patientMobile: b.patientMobile,
+        scheduledDate: b.scheduledDate,
+        scheduledSlot: b.scheduledSlot,
+        totalPaid: b.totalPaid,
+        paymentStatus: b.paymentStatus,
+        paymentMode: b.paymentMode,
+        collectionMode: b.collectionMode,
+        status: b.status,
+        collectionAddress: address ? `${address.line1}, ${address.city}` : null,
+        completedAt: b.deliveredToLabAt || b.sampleCollectedAt || null,
+        tests: b.tests.map(t => ({ name: t.test.name })),
+        packages: b.packages.map(p => ({ name: p.package.name })),
+        isRejected: false,
+        assignedExecutiveId: b.assignedExecutiveId,
+        assignedPartnerId: b.assignedPartnerId,
+        assignedExecutiveName: (b as any).assignedExecutive?.name || null,
+      };
+    }));
+    const rejectedFormatted = await Promise.all(rejections.map(async (r) => {
+      const b = r.booking;
+      const address = await prisma.address.findUnique({ where: { id: b.addressId } });
+return {
+        id: b.id,
+        bookingCode: b.bookingCode,
+        patientName: b.patientName,
+        patientAge: b.patientAge,
+        patientGender: b.patientGender,
+        patientMobile: b.patientMobile,
+        scheduledDate: b.scheduledDate,
+        scheduledSlot: b.scheduledSlot,
+        totalPaid: b.totalPaid,
+        paymentStatus: b.paymentStatus,
+        paymentMode: b.paymentMode,
+        collectionMode: b.collectionMode,
+        status: 'REJECTED_BY_PARTNER',
+        collectionAddress: address ? `${address.line1}, ${address.city}` : null,
+        completedAt: null,
+        rejectedAt: r.createdAt,
+        rejectionReason: r.reason,
+        tests: b.tests.map(t => ({ name: t.test.name })),
+        packages: b.packages.map(p => ({ name: p.package.name })),
+        isRejected: true,
+      };
+    }));
+
+    // Merge and sort by date descending, deduplicate by booking id
+    const seen = new Set<string>();
+    const merged = [...assignedFormatted, ...rejectedFormatted]
+      .sort((a, b) => new Date(b.scheduledDate).getTime() - new Date(a.scheduledDate).getTime())
+      .filter(item => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      });
+
+    res.json(merged);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to fetch history', details: error.message });
+  }
+};
+
+export const updatePartnerProfile = async (req: any, res: Response) => {
+  try {
+    const { name, address, city, state, pincode } = req.body;
+    const updateData: any = {};
+    if (address !== undefined) updateData.address = address;
+    if (city !== undefined) updateData.city = city;
+    if (state !== undefined) updateData.state = state;
+    if (pincode !== undefined) updateData.pincode = pincode;
+
+    const userUpdateData: any = {};
+    if (name !== undefined) userUpdateData.name = name;
+
+    const [partner] = await Promise.all([
+      prisma.pathologyPartner.update({
+        where: { userId: req.user.id },
+        data: updateData,
+        include: { user: { select: { name: true, email: true, mobile: true, avatarUrl: true } } },
+      }),
+      Object.keys(userUpdateData).length > 0
+        ? prisma.user.update({ where: { id: req.user.id }, data: userUpdateData })
+        : Promise.resolve(),
+    ]);
+
+    res.json({
+      ...partner,
+      name: partner.user.name,
+      email: partner.user.email,
+      mobile: partner.user.mobile,
+      avatarUrl: partner.user.avatarUrl,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to update profile', details: error.message });
+  }
+};
+
+export const getPartnerAvailability = async (req: any, res: Response) => {
+  try {
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+    if (!partner) return res.json({ isAvailable: true, availability: null });
+    res.json({
+      isAvailable: partner.isAvailable,
+      availability: (partner as any).availability || null,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to fetch availability', details: error.message });
+  }
+};
+
+export const updateAvailabilitySchedule = async (req: any, res: Response) => {
+  try {
+    const { isAvailable, availability } = req.body;
+    const data: any = {};
+    if (typeof isAvailable === 'boolean') data.isAvailable = isAvailable;
+    if (availability !== undefined) data.availability = availability;
+
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+    if (!partner) return res.json({ isAvailable: true, availability: null });
+
+    const updated = await prisma.pathologyPartner.update({
+      where: { id: partner.id },
+      data,
+    });
+    res.json({ isAvailable: updated.isAvailable, availability: (updated as any).availability });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to update availability', details: error.message });
+  }
+};
+
+export const getPartnerBranch = async (req: any, res: Response) => {
+  try {
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+    if (!partner || !partner.branchId) {
+      return res.json(null);
+    }
+    const branch = await prisma.branch.findUnique({
+      where: { id: partner.branchId },
+    });
+    res.json(branch);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to fetch branch', details: error.message });
+  }
+};
+
+export const getPartnerRatings = async (req: any, res: Response) => {
+  try {
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+    if (!partner) {
+      return res.json({
+        overallRating: 5.0,
+        totalReviews: 0,
+        totalCollections: 0,
+        collectionSuccessRate: 100,
+        averageArrivalTime: 'N/A',
+        breakdown: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+        reviews: [],
+      });
+    }
+
+    const [totalAssigned, completedBookings, deliveredBookings, ratingRows] = await Promise.all([
+      prisma.booking.count({
+        where: { assignedPartnerId: partner.id },
+      }),
+      prisma.booking.count({
+        where: {
+          assignedPartnerId: partner.id,
+          status: { in: ['DELIVERED_TO_LAB', 'PROCESSING', 'REPORT_READY', 'COMPLETED'] },
+        },
+      }),
+      prisma.booking.findMany({
+        where: {
+          assignedPartnerId: partner.id,
+          status: { in: ['DELIVERED_TO_LAB', 'PROCESSING', 'REPORT_READY', 'COMPLETED'] },
+          collectionStartedAt: { not: null },
+          sampleCollectedAt: { not: null },
+        },
+        select: { collectionStartedAt: true, sampleCollectedAt: true },
+        take: 100,
+      }),
+      prisma.partnerRating.findMany({
+        where: { partnerId: partner.id },
+        include: {
+          user: { select: { name: true } },
+          booking: { select: { bookingCode: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
+    ]);
+
+    const successRate = totalAssigned > 0
+      ? Math.round((completedBookings / totalAssigned) * 100)
+      : 0;
+
+    let averageArrivalTime = 'N/A';
+    if (deliveredBookings.length > 0) {
+      const totalMinutes = deliveredBookings.reduce((sum, b) => {
+        const diff = new Date(b.sampleCollectedAt!).getTime() - new Date(b.collectionStartedAt!).getTime();
+        return sum + Math.round(diff / 60000);
+      }, 0);
+      const avg = Math.round(totalMinutes / deliveredBookings.length);
+      averageArrivalTime = avg < 60 ? `${avg} min` : `${Math.floor(avg / 60)}h ${avg % 60}m`;
+    }
+
+    const breakdown: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+    ratingRows.forEach(r => {
+      breakdown[r.rating] = (breakdown[r.rating] || 0) + 1;
+    });
+
+    const aggregate = ratingRows.length > 0
+      ? ratingRows.reduce((sum, r) => sum + r.rating, 0) / ratingRows.length
+      : 0;
+
+    res.json({
+      overallRating: Math.round(aggregate * 10) / 10,
+      totalReviews: ratingRows.length,
+      totalCollections: partner.totalCollections,
+      collectionSuccessRate: successRate,
+      averageArrivalTime,
+      breakdown,
+      reviews: ratingRows.map(r => ({
+        id: r.id,
+        rating: r.rating,
+        customerName: r.user.name,
+        comment: r.review,
+        bookingCode: r.booking.bookingCode,
+        createdAt: r.createdAt,
+      })),
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to fetch ratings', details: error.message });
+  }
+};
+
+export const getPartnerStats = async (req: any, res: Response) => {
+  try {
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+    const partnerId = partner?.id;
+
+    const queryDateStr = req.query.date as string;
+    const targetDate = queryDateStr ? new Date(queryDateStr) : new Date();
+    
+    // Normalize targetDate to midnight
+    const startOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+
+    const prevStartOfDay = new Date(startOfDay.getTime() - 24 * 60 * 60 * 1000);
+    const prevEndOfDay = new Date(startOfDay.getTime());
+
+    const whereCollector: any[] = [
+      { assignedExecutiveId: req.user.id },
+      { paymentReceivedById: req.user.id },
+    ];
+    if (partnerId) whereCollector.push({ assignedPartnerId: partnerId });
+
+    // Helper to build date filter
+    const dateFilter = (start: Date, end: Date) => ({
+      scheduledDate: {
+        gte: start,
+        lt: end,
+      }
+    });
+
+    const [totalAssignedBookings, pendingCount, acceptedCount, completedToday, prevTotalJobs] = await Promise.all([
+      prisma.booking.count({
+        where: {
+          OR: whereCollector,
+          ...dateFilter(startOfDay, endOfDay)
+        }
+      }),
+      prisma.booking.count({
+        where: {
+          OR: [
+            {
+              OR: whereCollector,
+              status: { in: ['ASSIGNED', 'WAITING_FOR_PARTNER', 'ACCEPTED', 'ON_THE_WAY', 'REACHED_LOCATION', 'SAMPLE_COLLECTED', 'DELIVERING_TO_BRANCH', 'PENDING'] },
+            },
+            {
+              status: { in: ['WAITING_FOR_PARTNER', 'WAITING_FOR_ASSIGNMENT', 'PENDING'] },
+              collectionMode: 'HOME',
+              assignedExecutiveId: null,
+              assignedPartnerId: null,
+            }
+          ],
+          ...dateFilter(startOfDay, endOfDay)
+        }
+      }),
+      prisma.booking.count({
+        where: {
+          OR: whereCollector,
+          status: { in: ['ACCEPTED', 'ON_THE_WAY', 'REACHED_LOCATION', 'SAMPLE_COLLECTED', 'DELIVERING_TO_BRANCH'] },
+          ...dateFilter(startOfDay, endOfDay)
+        }
+      }),
+      prisma.booking.count({
+        where: {
+          OR: whereCollector,
+          status: { in: ['DELIVERED_TO_LAB', 'PROCESSING', 'REPORT_READY', 'COMPLETED'] },
+          ...dateFilter(startOfDay, endOfDay)
+        }
+      }),
+      // Previous day total jobs
+      prisma.booking.count({
+        where: {
+          OR: whereCollector,
+          ...dateFilter(prevStartOfDay, prevEndOfDay)
+        }
+      })
+    ]);
+
+    let trendPercentage = 0;
+    if (prevTotalJobs > 0) {
+      trendPercentage = Math.round(((totalAssignedBookings - prevTotalJobs) / prevTotalJobs) * 100);
+    } else if (totalAssignedBookings > 0) {
+      trendPercentage = 100;
+    }
+
+    res.json({
+      todayJobs: totalAssignedBookings,
+      pending: pendingCount,
+      accepted: acceptedCount,
+      completedToday,
+      completedPercent: totalAssignedBookings > 0 ? Math.round((completedToday / totalAssignedBookings) * 100) : 0,
+      totalCollections: partner?.totalCollections || completedToday,
+      rating: partner?.rating || 5.0,
+      trendPercentage,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to fetch stats', details: error.message });
+  }
+};
+
+export const getPartnerBranchStaff = async (req: any, res: Response) => {
+  try {
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      include: { adminUser: true }
+    });
+
+    // 1. Resolve all valid branch IDs belonging to this partner
+    const branchIds = new Set<string>();
+    if (partner?.branchId) branchIds.add(partner.branchId);
+    if (user?.adminUser?.branchId) branchIds.add(user.adminUser.branchId);
+
+    // Also link any branch that matches partner's phone or email
+    const partnerMobile = user?.mobile;
+    const partnerEmail = user?.email;
+    if (partnerMobile || partnerEmail) {
+      const branches = await prisma.branch.findMany({
+        where: {
+          OR: [
+            ...(partnerMobile ? [{ contactNumber: partnerMobile }] : []),
+            ...(partnerEmail ? [{ email: partnerEmail }] : []),
+            ...(partner?.partnerCode ? [{ code: partner.partnerCode }] : []),
+          ],
+        },
+        select: { id: true }
+      });
+      branches.forEach(b => branchIds.add(b.id));
+    }
+
+    const partnerId = partner?.id;
+
+    const whereConditions: any[] = [];
+    if (branchIds.size > 0) {
+      whereConditions.push({ branchId: { in: Array.from(branchIds) } });
+    }
+    if (partnerId) {
+      whereConditions.push({ partnerId });
+    }
+
+    if (whereConditions.length === 0) {
+      return res.json([]);
+    }
+
+    // 2. Fetch only the in-house phlebotomists / sample collectors of this branch/partner
+    const staffList = await prisma.adminUser.findMany({
+      where: {
+        OR: whereConditions,
+        isActive: true,
+        AND: [
+          {
+            OR: [
+              { userType: { in: ['STAFF', 'EMPLOYEE'] } },
+              { user: { role: 'EXECUTIVE' } },
+            ]
+          },
+          {
+            OR: [
+              { designation: { contains: 'phlebotom', mode: 'insensitive' } },
+              { designation: { contains: 'collector', mode: 'insensitive' } },
+              { department: { contains: 'phlebotom', mode: 'insensitive' } },
+              { department: { contains: 'collection', mode: 'insensitive' } },
+              { user: { role: 'EXECUTIVE' } },
+            ]
+          }
+        ]
+      },
+      include: {
+        user: { select: { id: true, name: true, email: true, mobile: true, role: true } },
+        branch: { select: { id: true, name: true } },
+      }
+    });
+
+    const formatted = staffList.map(s => ({
+      id: s.id,
+      userId: s.userId || s.id,
+      name: s.user?.name || 'Staff Member',
+      email: s.user?.email || '',
+      mobile: s.user?.mobile || '',
+      role: s.user?.role || 'EXECUTIVE',
+      branchId: s.branchId,
+      branchName: s.branch?.name || '',
+      designation: s.designation || 'In-House Phlebotomist',
+    }));
+
+    res.json(formatted);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to fetch branch staff', details: error.message });
+  }
+};
+
+export const assignPartnerStaff = async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { executiveId } = req.body;
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+
+    const booking = await prisma.booking.findUnique({ where: { id } });
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+
+    // Validate assignment permission
+    const targetAdminUser = await prisma.adminUser.findFirst({
+      where: {
+        OR: [
+          { userId: executiveId },
+          { id: executiveId },
+        ]
+      },
+      include: { user: true }
+    });
+
+    const targetUserId = targetAdminUser?.userId || executiveId;
+    const targetStaffName = targetAdminUser?.user?.name || 'Staff';
+
+    const updated = await prisma.booking.update({
+      where: { id },
+      data: {
+        assignedExecutiveId: targetUserId,
+        status: 'ASSIGNED',
+        assignedPartnerId: partner?.id || booking.assignedPartnerId,
+      }
+    });
+
+    await prisma.bookingStatusLog.create({
+      data: {
+        bookingId: id,
+        status: 'ASSIGNED',
+        note: `Assigned to employee staff ${targetStaffName} by partner`,
+        updatedBy: req.user.id,
+      }
+    });
+
+    if (targetUserId) {
+      sendNotificationToUser(
+        targetUserId,
+        'New Sample Collection Assigned',
+        `Booking ${booking.bookingCode} for ${booking.patientName} has been assigned to your duty queue.`,
+        'NEW_BOOKING_ASSIGNED',
+        { bookingId: id }
+      ).catch(console.error);
+    }
+
+    res.json(updated);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to assign staff', details: error.message });
+  }
+};
+
+export const getPartnerEarnings = async (req: any, res: Response) => {
+  try {
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+    if (!partner) return res.status(404).json({ error: 'Partner profile not found.' });
+
+    const transactions = await prisma.partnerWalletTransaction.findMany({
+      where: { partnerId: partner.id },
+      include: {
+        booking: { select: { bookingCode: true, patientName: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json({
+      walletBalance: partner.walletBalance,
+      payoutFrequency: partner.paymentCycle || 'MONTHLY',
+      commissionRate: partner.commissionRate || 30.0,
+      transactions
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to fetch earnings', details: error.message });
+  }
+};
+
+export const updatePayoutFrequency = async (req: any, res: Response) => {
+  try {
+    const { frequency } = req.body;
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+    if (!partner) return res.status(404).json({ error: 'Partner profile not found.' });
+
+    if (!['DAILY', 'WEEKLY', 'MONTHLY'].includes(frequency)) {
+      return res.status(400).json({ error: 'Invalid payout frequency' });
+    }
+
+    const updated = await prisma.pathologyPartner.update({
+      where: { id: partner.id },
+      data: { paymentCycle: frequency }
+    });
+
+    res.json({ success: true, payoutFrequency: updated.paymentCycle });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to update frequency', details: error.message });
+  }
+};
+
+export const updateCommissionRate = async (req: any, res: Response) => {
+  try {
+    const { rate } = req.body;
+    const parsedRate = parseFloat(rate);
+    
+    if (isNaN(parsedRate) || parsedRate < 0 || parsedRate > 100) {
+      return res.status(400).json({ error: 'Invalid commission rate. Must be between 0 and 100.' });
+    }
+
+    const partner = await getOrFindPartner(req.user.id, req.user.role);
+    if (!partner) return res.status(404).json({ error: 'Partner profile not found.' });
+
+    const updated = await prisma.pathologyPartner.update({
+      where: { id: partner.id },
+      data: { commissionRate: parsedRate }
+    });
+
+    res.json({ success: true, commissionRate: updated.commissionRate });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to update commission rate', details: error.message });
+  }
+};
