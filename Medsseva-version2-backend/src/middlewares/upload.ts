@@ -26,7 +26,7 @@ const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCa
   cb(null, true);
 };
 
-export const prescriptionUpload = multer({
+export const prescriptionUpload: any = multer({
   storage,
   limits: { fileSize: MAX_FILE_SIZE_BYTES },
   fileFilter,
@@ -42,7 +42,7 @@ const avatarFileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFi
   cb(null, true);
 };
 
-export const avatarUpload = multer({
+export const avatarUpload: any = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: avatarFileFilter,
@@ -66,7 +66,7 @@ const documentFileFilter = (req: any, file: Express.Multer.File, cb: multer.File
   cb(null, true);
 };
 
-export const documentUpload = multer({
+export const documentUpload: any = multer({
   storage,
   limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: documentFileFilter,

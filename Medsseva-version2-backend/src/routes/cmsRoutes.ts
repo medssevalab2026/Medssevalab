@@ -11,7 +11,7 @@ import {
 } from '../controllers/cmsController';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const upload: any = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 // Public routes (No authentication required)
 router.get('/banners', getBanners);

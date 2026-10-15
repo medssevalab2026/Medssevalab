@@ -11,7 +11,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://medsseva-backend-cnud.onrender.com/api"
+        "EXPO_PUBLIC_API_URL": "https://medsseva-backend-0v1i.onrender.com/api"
       }
     },
     "preview": {
@@ -21,7 +21,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://medsseva-backend-cnud.onrender.com/api",
+        "EXPO_PUBLIC_API_URL": "https://medsseva-backend-0v1i.onrender.com/api",
         "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "AIzaSyAdezYYmmFzsMWzbSYkr1UtHBan7HitQK0"
       }
     },
@@ -31,7 +31,7 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://medsseva-backend-cnud.onrender.com/api",
+        "EXPO_PUBLIC_API_URL": "https://medsseva-backend-0v1i.onrender.com/api",
         "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "AIzaSyAdezYYmmFzsMWzbSYkr1UtHBan7HitQK0"
       }
     }

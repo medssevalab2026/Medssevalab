@@ -17,7 +17,7 @@ const router = Router();
 
 router.use(authenticate);
 
-const signatureUpload = multer({
+const signatureUpload: any = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req: any, file: Express.Multer.File, cb: any) => {
