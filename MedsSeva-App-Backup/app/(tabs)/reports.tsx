@@ -13,6 +13,7 @@ import * as Linking from 'expo-linking';
 import * as Sharing from 'expo-sharing';
 import { apiService } from '../../src/services/api';
 import api from '../../src/services/api';
+import { PRODUCTION_API_URL } from '../../src/config/env';
 import { RootState } from '../../src/store';
 
 export default function ReportsScreen() {
@@ -183,7 +184,7 @@ useEffect(() => {
                   const invoiceUrl = item.booking?.payment?.invoiceUrl;
                   let finalUrl = invoiceUrl;
                   if (!finalUrl && item.booking?.id) {
-                    const baseUrl = api.defaults.baseURL || 'http://localhost:5000/api';
+                    const baseUrl = api.defaults.baseURL || PRODUCTION_API_URL;
                     finalUrl = `${baseUrl}/payments/invoice/${item.booking.id}/pdf`;
                   }
                   if (finalUrl) {

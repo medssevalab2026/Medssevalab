@@ -482,5 +482,19 @@ export const collectionPartnerService = {
     api.patch('/collection-partners/commissions/payout', data).then(r => r.data),
 };
 
+export const serviceAreaService = {
+  getOverview: () => api.get('/service-areas/overview').then(r => r.data),
+  list: () => api.get('/service-areas').then(r => r.data),
+  create: (data: { pincode: string; city?: string; state?: string; latitude?: number | null; longitude?: number | null; isActive?: boolean }) =>
+    api.post('/service-areas', data).then(r => r.data),
+  update: (id: string, data: Partial<{ pincode: string; city: string; state: string; latitude: number | null; longitude: number | null; isActive: boolean }>) =>
+    api.put(`/service-areas/${id}`, data).then(r => r.data),
+  delete: (id: string) => api.delete(`/service-areas/${id}`).then(r => r.data),
+  syncFromBranches: () => api.post('/service-areas/sync-from-branches').then(r => r.data),
+  updatePartnerGeofencing: (id: string, data: { latitude?: number | null; longitude?: number | null; serviceRadiusKm?: number; preferredServiceArea?: string | null }) =>
+    api.patch(`/service-areas/partner-geofencing/${id}`, data).then(r => r.data),
+};
+
 export default api;
+
 

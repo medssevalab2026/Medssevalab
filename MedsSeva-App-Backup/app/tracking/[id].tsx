@@ -16,6 +16,7 @@ import { showSuccess, showError } from '../../src/store/toastStore';
 import { COLORS, TYPOGRAPHY, SHADOWS } from '../../src/theme/theme';
 import { apiService } from '../../src/services/api';
 import api from '../../src/services/api';
+import { PRODUCTION_API_URL } from '../../src/config/env';
 const STATUS_ORDER = [
   'PENDING',
   'WAITING_FOR_PARTNER',
@@ -82,7 +83,7 @@ const liveBooking = bookings;
     let invoiceUrl = liveBooking?.payment?.invoiceUrl;
     const bookingCode = liveBooking?.bookingCode || 'Invoice';
     if (!invoiceUrl && liveBooking?.id) {
-      const baseUrl = api.defaults.baseURL || 'http://localhost:5000/api';
+      const baseUrl = api.defaults.baseURL || PRODUCTION_API_URL;
       invoiceUrl = `${baseUrl}/payments/invoice/${liveBooking.id}/pdf`;
     }
     if (!invoiceUrl) return;
@@ -268,6 +269,34 @@ const liveBooking = bookings;
                 </View>
                 <Text style={styles.otpValue}>{otp}</Text>
               </View>
+            )}
+
+            {/* Live Map Tracking Button */}
+            {['ASSIGNED', 'ACCEPTED', 'ON_THE_WAY', 'REACHED_LOCATION', 'SAMPLE_COLLECTED'].includes(liveBooking?.status || '') && (
+              <TouchableOpacity
+                style={styles.liveMapCard}
+                onPress={() => router.push({ pathname: '/(tabs)/track', params: { bookingId: liveBooking?.id || bookingId } } as any)}
+                activeOpacity={0.85}
+              >
+                <View style={styles.liveMapIconBox}>
+                  <MaterialCommunityIcons name="map-marker-radius" size={24} color="#fff" />
+                </View>
+                <View style={styles.liveMapTextBox}>
+                  <View style={styles.liveTagRow}>
+                    <Text style={styles.liveMapTitle}>Live Map & Route</Text>
+                    <View style={styles.liveTag}>
+                      <View style={styles.liveDot} />
+                      <Text style={styles.liveTagText}>GOOGLE MAP</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.liveMapDesc}>
+                    {liveBooking?.status === 'ON_THE_WAY'
+                      ? 'Partner is on the way. Tap to track real-time location & ETA.'
+                      : 'Tap to view live Google Maps route and partner distance.'}
+                  </Text>
+                </View>
+                <MaterialCommunityIcons name="chevron-right" size={24} color={COLORS.primary} />
+              </TouchableOpacity>
             )}
 
      {/* Payment status */}
@@ -702,6 +731,64 @@ paidBadgeText: { fontSize: 13, fontWeight: '600', color: '#065F46', flex: 1 },
     fontWeight: 'bold',
     color: COLORS.textDark,
   },
- 
-
+  liveMapCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F9FF',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1.5,
+    borderColor: '#BAE6FD',
+    ...SHADOWS.soft,
+  },
+  liveMapIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  liveMapTextBox: {
+    flex: 1,
+  },
+  liveTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 2,
+  },
+  liveMapTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0369A1',
+  },
+  liveTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    gap: 4,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#38BDF8',
+  },
+  liveTagText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: 0.5,
+  },
+  liveMapDesc: {
+    fontSize: 12,
+    color: '#0C4A6E',
+    lineHeight: 16,
+  },
 });

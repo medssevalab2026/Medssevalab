@@ -1702,6 +1702,10 @@ export const updatePartnerByAdmin = async (req: Request, res: Response) => {
       adminRoleId,
       grantAdminAccess,
       permissionIds,
+      latitude,
+      longitude,
+      serviceRadiusKm,
+      preferredServiceArea,
     } = req.body;
 
     const partner = await prisma.pathologyPartner.findUnique({
@@ -1782,6 +1786,10 @@ export const updatePartnerByAdmin = async (req: Request, res: Response) => {
     if (password && String(password).trim().length > 0) {
       partnerUpdate.password = String(password).trim();
     }
+    if (latitude !== undefined) partnerUpdate.latitude = latitude !== null && latitude !== '' ? Number(latitude) : null;
+    if (longitude !== undefined) partnerUpdate.longitude = longitude !== null && longitude !== '' ? Number(longitude) : null;
+    if (serviceRadiusKm !== undefined) partnerUpdate.serviceRadiusKm = Number(serviceRadiusKm) || 3;
+    if (preferredServiceArea !== undefined) partnerUpdate.preferredServiceArea = preferredServiceArea ? String(preferredServiceArea).trim() : null;
 
     const updatedPartner = await prisma.pathologyPartner.update({
       where: { id },

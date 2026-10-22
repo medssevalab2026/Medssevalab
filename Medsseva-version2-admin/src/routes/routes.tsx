@@ -27,6 +27,7 @@ import { DoctorsPage } from '@/pages/Doctors';
 import { StaffPage } from '@/pages/Staff';
 import { UnauthorizedPage } from '@/pages/Unauthorized';
 import Branches from '../pages/Branches';
+import { ServiceAreasPage } from '@/pages/ServiceAreas';
 import { PathologyPartnersPage } from '@/pages/PathologyPartners';
 import { CollectionPartnersPage } from '@/pages/CollectionPartners';
 import PrescriptionsPage from '@/pages/Prescriptions';
@@ -276,6 +277,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute permission="franchise.view">
             <Branches />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: 'service-areas',
+        element: (
+          <ProtectedRoute permission="franchise.view">
+            <ServiceAreasPage />
           </ProtectedRoute>
         ),
       },

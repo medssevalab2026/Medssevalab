@@ -12,6 +12,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, TYPOGRAPHY, SHADOWS } from '../../src/theme/theme';
 import { apiService } from '../../src/services/api';
 import api from '../../src/services/api';
+import { PRODUCTION_API_URL } from '../../src/config/env';
 
 const STATUS_LABELS: Record<string, string> = {
   PENDING: 'Pending',
@@ -179,7 +180,7 @@ if (isLoading) {
   
   let invoiceUrl = booking.payment?.invoiceUrl || null;
   if (!invoiceUrl && booking.id) {
-    const baseUrl = api.defaults.baseURL || 'http://localhost:5000/api';
+    const baseUrl = api.defaults.baseURL || PRODUCTION_API_URL;
     invoiceUrl = `${baseUrl}/payments/invoice/${booking.id}/pdf`;
   }
   const hasInvoice = !!invoiceUrl;
@@ -229,6 +230,33 @@ if (isLoading) {
             </Text>
           </View>
         </View>
+
+        {['ASSIGNED', 'ACCEPTED', 'ON_THE_WAY', 'REACHED_LOCATION', 'SAMPLE_COLLECTED'].includes(booking.status) ? (
+          <TouchableOpacity
+            style={styles.trackLiveMapBtn}
+            onPress={() => router.push({ pathname: '/(tabs)/track', params: { bookingId: booking.id } } as any)}
+            activeOpacity={0.85}
+          >
+            <View style={styles.trackLiveIconWrap}>
+              <MaterialCommunityIcons name="map-marker-radius" size={22} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.trackLiveTitle}>Live Map Tracking</Text>
+              <Text style={styles.trackLiveSub}>Track executive GPS location and arrival ETA</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={22} color="#fff" />
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.trackTimelineBtn}
+            onPress={() => router.push(`/tracking/${booking.id}` as any)}
+            activeOpacity={0.85}
+          >
+            <MaterialCommunityIcons name="timeline-clock-outline" size={20} color={COLORS.primary} />
+            <Text style={styles.trackTimelineBtnText}>View Booking Status Timeline</Text>
+            <MaterialCommunityIcons name="chevron-right" size={20} color={COLORS.primary} />
+          </TouchableOpacity>
+        )}
 
         <Section title="Patient Information">
           <InfoRow label="Name" value={booking.patientName} />
@@ -400,4 +428,49 @@ container: { flex: 1, backgroundColor: COLORS.background },
   invoiceBtnSecondary: { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: COLORS.primary },
   invoiceBtnText: { fontSize: 13, fontWeight: 'bold', color: '#fff' },
   invoiceNumber: { fontSize: 11, color: COLORS.textSecondary, textAlign: 'center', marginTop: 4 },
+  trackLiveMapBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.primary,
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 16,
+    gap: 12,
+    ...SHADOWS.medium,
+  },
+  trackLiveIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  trackLiveTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#fff',
+    marginBottom: 2,
+  },
+  trackLiveSub: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.85)',
+  },
+  trackTimelineBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F9FF',
+    padding: 14,
+    borderRadius: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    gap: 10,
+  },
+  trackTimelineBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.primary,
+    flex: 1,
+  },
 });

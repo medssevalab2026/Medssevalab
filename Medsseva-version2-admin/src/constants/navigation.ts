@@ -19,7 +19,8 @@ import {
   MessageCircle,
   ShieldCheck,
   MapPin,
- Microscope,
+  Globe,
+  Microscope,
   NotepadText,
   Stethoscope,
   Briefcase,
@@ -159,10 +160,16 @@ export const NAVIGATION_ITEMS: NavItem[] = [
     icon: Ticket,
     moduleKey: 'coupons',
   },
-{
+  {
     title: 'Branch Management',
     path: '/branches',
     icon: MapPin,
+    moduleKey: 'franchise',
+  },
+  {
+    title: 'Service Areas & Geofencing',
+    path: '/service-areas',
+    icon: Globe,
     moduleKey: 'franchise',
   },
   {

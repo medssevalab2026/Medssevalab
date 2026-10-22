@@ -170,15 +170,17 @@ const handleBookNow = () => {
           <Text style={styles.sectionSubtitle}>Names of the specific metrics tested</Text>
           
           <View style={styles.parametersList}>
-             {/* We mock parameter names if not strictly available in the object for visual purposes */}
-             {['Hemoglobin', 'RBC Count', 'WBC Count', 'Platelet Count', 'MCV', 'MCH'].map((param, index) => (
+             {(Array.isArray(test.parameters) && test.parameters.length > 0
+               ? test.parameters.map((p: any) => typeof p === 'string' ? p : (p.name || 'Parameter'))
+               : ['Hemoglobin', 'RBC Count', 'WBC Count', 'Platelet Count', 'MCV', 'MCH']
+             ).slice(0, 8).map((param: string, index: number) => (
                <View key={index} style={styles.parameterItem}>
                  <MaterialCommunityIcons name="check-circle" size={16} color={COLORS.success} />
                  <Text style={styles.parameterText}>{param}</Text>
                </View>
              ))}
-             {test.parameters > 6 && (
-               <Text style={styles.andMoreText}>+ {test.parameters - 6} more parameters...</Text>
+             {Array.isArray(test.parameters) && test.parameters.length > 8 && (
+               <Text style={styles.andMoreText}>+ {test.parameters.length - 8} more parameters...</Text>
              )}
           </View>
         </View>

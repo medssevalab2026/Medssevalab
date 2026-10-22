@@ -89,13 +89,15 @@ export default function AddressScreen() {
 
       if (geocode) {
         const addressObj = {
-          mobile: user?.mobile || '9999999999',
+          mobile: user?.mobile || '',
           type: 'Other',
           line1: `${geocode.name || ''} ${geocode.street || ''}`.trim() || 'Detected Location',
           line2: `${geocode.subregion || ''} ${geocode.district || ''}`.trim(),
           city: geocode.city || '',
           state: geocode.region || '',
           pincode: geocode.postalCode || '',
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
           isDefault: true
         };
 
@@ -113,7 +115,7 @@ export default function AddressScreen() {
             params: {
               prefillLat: location.coords.latitude,
               prefillLng: location.coords.longitude,
-              prefillLine1: addressObj.addressLine1,
+              prefillLine1: addressObj.line1,
               prefillCity: addressObj.city,
               prefillState: addressObj.state,
               prefillPincode: addressObj.pincode,

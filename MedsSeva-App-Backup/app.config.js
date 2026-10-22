@@ -1,5 +1,5 @@
 const appJson = require('./app.json');
-const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || appJson.expo.android?.config?.googleMaps?.apiKey || 'AIzaSyAdezYYmmFzsMWzbSYkr1UtHBan7HitQK0';
 
 /** @type {import('expo/config').ExpoConfig} */
 module.exports = {

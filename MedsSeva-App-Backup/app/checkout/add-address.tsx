@@ -32,8 +32,8 @@ export default function AddAddressScreen() {
   const [pincode, setPincode] = useState((params.pincode as string) || '');
   const [city, setCity] = useState((params.city as string) || '');
   const [state, setState] = useState((params.state as string) || '');
-  const [name, setName] = useState(user?.name || 'John Doe');
-  const [phone, setPhone] = useState(user?.mobile || '+91 9876543210');
+  const [name, setName] = useState(user?.name || '');
+  const [phone, setPhone] = useState(user?.mobile || '');
   const [addressType, setAddressType] = useState<'Home' | 'Work' | 'Other'>('Home');
   const [isLocating, setIsLocating] = useState(false);
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -73,7 +73,21 @@ showInfo("Please fill in all mandatory address fields.");
       return;
     }
 
-    if (!coords) {
+    let activeCoords = coords;
+    if (!activeCoords) {
+      try {
+        const query = `${area}, ${city}, ${pincode}, India`;
+        const geocoded = await Location.geocodeAsync(query);
+        if (geocoded && geocoded.length > 0) {
+          activeCoords = { latitude: geocoded[0].latitude, longitude: geocoded[0].longitude };
+          setCoords(activeCoords);
+        }
+      } catch (err) {
+        console.warn('Fallback geocoding error:', err);
+      }
+    }
+
+    if (!activeCoords) {
       showInfo('Please detect your current location before saving the address.');
       return;
     }
@@ -103,21 +117,21 @@ showInfo("Please fill in all mandatory address fields.");
       city: city.trim(),
       state: state.trim(),
       pincode: pincode.trim(),
-     latitude: coords.latitude,
-      longitude: coords.longitude,
+      latitude: activeCoords.latitude,
+      longitude: activeCoords.longitude,
     };
 
 try {
       const saved = await apiService.addAddress({
-        mobile: user?.mobile || '9999999999',
+        mobile: phone.trim() || user?.mobile || '',
         type: addressType,
         line1: `${flatNo}, ${area}`,
         line2: landmark.trim(),
         city: city.trim(),
         state: state.trim(),
         pincode: pincode.trim(),
-        latitude: coords.latitude,
-        longitude: coords.longitude,
+        latitude: activeCoords.latitude,
+        longitude: activeCoords.longitude,
         isDefault: true
       });
       console.log('[ADD-ADDRESS DEBUG] Backend saved ID:', saved.id);

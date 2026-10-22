@@ -1,4 +1,4 @@
-﻿node_modules/
+node_modules/
 .env
 .env.*
 !.env.example
@@ -7,3 +7,12 @@ build/
 coverage/
 .expo/
 .DS_Store
+
+# Publishing Keys, Keystores & Build Artifacts
+MedsSeva-Publishing-Keys/
+credentials*.json
+*.keystore
+*.jks
+*.aab
+*.apk
+check_db.js

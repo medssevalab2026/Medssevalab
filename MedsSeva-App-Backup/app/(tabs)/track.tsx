@@ -5,7 +5,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSelector } from 'react-redux';
 import messaging from '@react-native-firebase/messaging';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 
 import { COLORS, TYPOGRAPHY } from '../../src/theme/theme';
 import { RootState } from '../../src/store';
@@ -156,6 +156,103 @@ useEffect(() => {
   const partnerName = partner?.user?.name || 'Partner';
   const partnerMobile = partner?.user?.mobile || '';
 
+  const patientLat = booking?.address?.latitude != null ? Number(booking.address.latitude) : null;
+  const patientLng = booking?.address?.longitude != null ? Number(booking.address.longitude) : null;
+  const hasPatientCoord = patientLat !== null && patientLng !== null && isFinite(patientLat) && isFinite(patientLng) && patientLat !== 0;
+
+  const partnerLat = partner?.latitude != null
+    ? Number(partner.latitude)
+    : (booking?.assignedExecutive?.latitude != null
+        ? Number(booking.assignedExecutive.latitude)
+        : (booking?.branch?.latitude != null ? Number(booking.branch.latitude) : null));
+  const partnerLng = partner?.longitude != null
+    ? Number(partner.longitude)
+    : (booking?.assignedExecutive?.longitude != null
+        ? Number(booking.assignedExecutive.longitude)
+        : (booking?.branch?.longitude != null ? Number(booking.branch.longitude) : null));
+  const hasPartnerCoord = partnerLat !== null && partnerLng !== null && isFinite(partnerLat) && isFinite(partnerLng) && partnerLat !== 0;
+
+  const calculateDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c * 10) / 10;
+  };
+
+  const distanceKm = hasPatientCoord && hasPartnerCoord
+    ? calculateDistanceKm(partnerLat!, partnerLng!, patientLat!, patientLng!)
+    : null;
+
+  const mapRef = useRef<MapView | null>(null);
+
+  const fitMap = useCallback(() => {
+    if (!mapRef.current) return;
+    if (hasPatientCoord && hasPartnerCoord) {
+      mapRef.current.fitToCoordinates(
+        [
+          { latitude: patientLat!, longitude: patientLng! },
+          { latitude: partnerLat!, longitude: partnerLng! },
+        ],
+        {
+          edgePadding: { top: 120, right: 60, bottom: 330, left: 60 },
+          animated: true,
+        }
+      );
+    } else if (hasPatientCoord) {
+      mapRef.current.animateToRegion({
+        latitude: patientLat!,
+        longitude: patientLng!,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      }, 600);
+    } else if (hasPartnerCoord) {
+      mapRef.current.animateToRegion({
+        latitude: partnerLat!,
+        longitude: partnerLng!,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      }, 600);
+    }
+  }, [hasPatientCoord, hasPartnerCoord, patientLat, patientLng, partnerLat, partnerLng]);
+
+  useEffect(() => {
+    if (hasPatientCoord || hasPartnerCoord) {
+      const timer = setTimeout(fitMap, 600);
+      return () => clearTimeout(timer);
+    }
+  }, [hasPatientCoord, hasPartnerCoord, patientLat, patientLng, partnerLat, partnerLng, fitMap]);
+
+  const activeRegion = hasPatientCoord
+    ? {
+        latitude: patientLat!,
+        longitude: patientLng!,
+        latitudeDelta: 0.03,
+        longitudeDelta: 0.03,
+      }
+    : (hasPartnerCoord
+        ? {
+            latitude: partnerLat!,
+            longitude: partnerLng!,
+            latitudeDelta: 0.03,
+            longitudeDelta: 0.03,
+          }
+        : DEFAULT_REGION);
+
+  const getDynamicEtaText = () => {
+    if (isLoading) return 'Loading...';
+    const status = booking?.status || '';
+    if (status === 'ON_THE_WAY' && distanceKm !== null) {
+      const estMinutes = Math.max(5, Math.round(distanceKm * 3.5));
+      return `Partner is ~${estMinutes} mins away (${distanceKm} km)`;
+    }
+    return getEtaText(status);
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.headerOverlay}>
@@ -175,15 +272,68 @@ useEffect(() => {
           <Text style={styles.webMapSubText}>Please use an iOS or Android device.</Text>
         </View>
       ) : (
-        <MapView
-          style={styles.map}
-          provider={PROVIDER_GOOGLE}
-          initialRegion={DEFAULT_REGION}
-          showsUserLocation
-          showsMyLocationButton={false}
-        >
-          <Marker coordinate={DEFAULT_REGION} title="MedsSeva" description="Live tracking map" />
-        </MapView>
+        <View style={styles.mapWrapper}>
+          <MapView
+            ref={mapRef}
+            style={styles.map}
+            provider={PROVIDER_GOOGLE}
+            initialRegion={activeRegion}
+            showsUserLocation
+            showsMyLocationButton={false}
+            showsTraffic={false}
+            showsCompass={true}
+          >
+            {hasPatientCoord && (
+              <Marker
+                coordinate={{ latitude: patientLat!, longitude: patientLng! }}
+                title="Sample Collection Location"
+                description={booking?.address?.line1 || 'Patient Location'}
+              >
+                <View style={styles.markerContainer}>
+                  <View style={styles.patientPin}>
+                    <MaterialCommunityIcons name="home-account" size={20} color="#fff" />
+                  </View>
+                  <View style={styles.pinLabel}>
+                    <Text style={styles.pinLabelText}>Home</Text>
+                  </View>
+                </View>
+              </Marker>
+            )}
+
+            {hasPartnerCoord && (
+              <Marker
+                coordinate={{ latitude: partnerLat!, longitude: partnerLng! }}
+                title={partnerName}
+                description={booking?.status === 'ON_THE_WAY' ? 'On the way to your location' : 'Assigned Partner'}
+              >
+                <View style={styles.markerContainer}>
+                  <View style={styles.partnerPin}>
+                    <MaterialCommunityIcons name="motorbike" size={20} color="#fff" />
+                  </View>
+                  <View style={[styles.pinLabel, { backgroundColor: '#059669' }]}>
+                    <Text style={styles.pinLabelText}>Partner</Text>
+                  </View>
+                </View>
+              </Marker>
+            )}
+
+            {hasPatientCoord && hasPartnerCoord && (
+              <Polyline
+                coordinates={[
+                  { latitude: partnerLat!, longitude: partnerLng! },
+                  { latitude: patientLat!, longitude: patientLng! },
+                ]}
+                strokeColor="#0284C7"
+                strokeWidth={3}
+                lineDashPattern={[8, 4]}
+              />
+            )}
+          </MapView>
+
+          <TouchableOpacity style={styles.recenterButton} onPress={fitMap}>
+            <MaterialCommunityIcons name="crosshairs-gps" size={22} color={COLORS.primary} />
+          </TouchableOpacity>
+        </View>
       )}
 
       <View style={styles.bottomSheet}>
@@ -191,7 +341,7 @@ useEffect(() => {
           <LinearGradient colors={['#F0F9FF', '#E0F2FE']} style={styles.etaBadge}>
             <MaterialCommunityIcons name="clock-fast" size={20} color={COLORS.primary} />
             <Text style={styles.etaText}>
-              {isLoading ? 'Loading...' : getEtaText(booking?.status || '')}
+              {getDynamicEtaText()}
             </Text>
           </LinearGradient>
           {booking?.bookingCode && (
@@ -296,7 +446,32 @@ const styles = StyleSheet.create({
   backButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
   headerTitle: { ...TYPOGRAPHY.h3, color: COLORS.textDark },
   helpButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F0F9FF', justifyContent: 'center', alignItems: 'center' },
+  mapWrapper: { flex: 1, position: 'relative' },
   map: { flex: 1 },
+  recenterButton: {
+    position: 'absolute', right: 20, top: 120,
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center',
+    elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4,
+  },
+  markerContainer: { alignItems: 'center' },
+  patientPin: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: '#0284C7', justifyContent: 'center', alignItems: 'center',
+    borderWidth: 2, borderColor: '#fff',
+    elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3,
+  },
+  partnerPin: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: '#059669', justifyContent: 'center', alignItems: 'center',
+    borderWidth: 2, borderColor: '#fff',
+    elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3,
+  },
+  pinLabel: {
+    backgroundColor: '#0284C7', paddingHorizontal: 6, paddingVertical: 2,
+    borderRadius: 8, marginTop: 2,
+  },
+  pinLabelText: { color: '#fff', fontSize: 10, fontWeight: '700' },
   webMapFallback: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#E2E8F0' },
   webMapText: { ...TYPOGRAPHY.h3, color: COLORS.textDark, marginTop: 16 },
   webMapSubText: { ...TYPOGRAPHY.body, color: '#64748B', marginTop: 8 },

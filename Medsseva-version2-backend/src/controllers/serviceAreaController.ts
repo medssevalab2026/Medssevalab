@@ -133,3 +133,70 @@ export const syncServiceAreasFromBranches = async (_req: Request, res: Response)
     res.status(500).json({ error: 'Failed to sync service areas', details: error.message });
   }
 };
+
+export const getGeofencingOverview = async (_req: Request, res: Response) => {
+  try {
+    const [serviceAreas, branches, partners] = await Promise.all([
+      prisma.serviceAreaPincode.findMany({ orderBy: [{ isActive: 'desc' }, { pincode: 'asc' }] }),
+      prisma.branch.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          city: true,
+          state: true,
+          pincode: true,
+          latitude: true,
+          longitude: true,
+          contactNumber: true,
+          isActive: true,
+        },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.pathologyPartner.findMany({
+        include: {
+          user: { select: { name: true, mobile: true, email: true } },
+        },
+        orderBy: { labName: 'asc' },
+      }),
+    ]);
+
+    res.json({ serviceAreas, branches, partners });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to fetch geofencing overview', details: error.message });
+  }
+};
+
+export const updatePartnerGeofencing = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { latitude, longitude, serviceRadiusKm, preferredServiceArea } = req.body;
+
+    const data: any = {};
+    if (latitude !== undefined) data.latitude = latitude !== null && latitude !== '' ? Number(latitude) : null;
+    if (longitude !== undefined) data.longitude = longitude !== null && longitude !== '' ? Number(longitude) : null;
+    if (serviceRadiusKm !== undefined) data.serviceRadiusKm = Number(serviceRadiusKm) || 3;
+    if (preferredServiceArea !== undefined) data.preferredServiceArea = preferredServiceArea ? String(preferredServiceArea).trim() : null;
+
+    const updated = await prisma.pathologyPartner.update({
+      where: { id },
+      data,
+      include: { user: { select: { name: true, mobile: true, email: true } } },
+    });
+
+    if (updated.branchId && (data.latitude != null || data.longitude != null)) {
+      await prisma.branch.update({
+        where: { id: updated.branchId },
+        data: {
+          ...(data.latitude != null ? { latitude: data.latitude } : {}),
+          ...(data.longitude != null ? { longitude: data.longitude } : {}),
+        },
+      }).catch(() => {});
+    }
+
+    res.json({ success: true, message: 'Geofencing radius & coordinates updated successfully', partner: updated });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to update partner geofencing', details: error.message });
+  }
+};
