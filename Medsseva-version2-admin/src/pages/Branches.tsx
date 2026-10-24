@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useBranchesQuery } from '@/hooks/useAdminQueries';
 import { useDispatch, useSelector } from 'react-redux';
 import { AppDispatch, RootState } from '../redux/store';
@@ -18,6 +19,7 @@ import {
   ToggleLeft,
   ToggleRight,
   MapPin,
+  Globe,
   Phone,
   Mail,
   Clock,
@@ -281,12 +283,20 @@ export default function Branches() {
           <h1 className="text-2xl font-bold text-gray-900">Branch Management</h1>
           <p className="text-sm text-gray-500 mt-1">Manage all MedSeva collection branches & team rosters</p>
         </div>
-        <button
-          onClick={openCreate}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-medium transition"
-        >
-          <Plus size={16} /> Add Branch
-        </button>
+        <div className="flex items-center gap-2.5">
+          <Link
+            to="/service-areas"
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-sm font-medium transition shadow-sm"
+          >
+            <Globe size={16} /> Service Areas & Pincodes
+          </Link>
+          <button
+            onClick={openCreate}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-medium transition"
+          >
+            <Plus size={16} /> Add Branch
+          </button>
+        </div>
       </div>
 
       {/* Search Bar & Filters */}

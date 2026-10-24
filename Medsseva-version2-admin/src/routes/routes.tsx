@@ -272,10 +272,10 @@ export const router = createBrowserRouter([
           </ProtectedRoute>
         ),
       },
- {
+      {
         path: 'branches',
         element: (
-          <ProtectedRoute permission="franchise.view">
+          <ProtectedRoute>
             <Branches />
           </ProtectedRoute>
         ),
@@ -283,7 +283,7 @@ export const router = createBrowserRouter([
       {
         path: 'service-areas',
         element: (
-          <ProtectedRoute permission="franchise.view">
+          <ProtectedRoute>
             <ServiceAreasPage />
           </ProtectedRoute>
         ),

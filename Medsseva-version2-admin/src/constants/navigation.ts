@@ -164,13 +164,11 @@ export const NAVIGATION_ITEMS: NavItem[] = [
     title: 'Branch Management',
     path: '/branches',
     icon: MapPin,
-    moduleKey: 'franchise',
   },
   {
-    title: 'Service Areas & Geofencing',
+    title: 'Service Areas & Pincodes',
     path: '/service-areas',
     icon: Globe,
-    moduleKey: 'franchise',
   },
   {
     title: 'Franchise Tracking',

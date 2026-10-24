@@ -77,6 +77,8 @@ export function ServiceAreasPage() {
     isActive: true,
   });
   const [savingArea, setSavingArea] = useState(false);
+  const [placeQuery, setPlaceQuery] = useState('');
+  const [searchingPlace, setSearchingPlace] = useState(false);
 
   // Edit Partner Geofencing Modal
   const [geofenceModalOpen, setGeofenceModalOpen] = useState(false);
@@ -362,6 +364,59 @@ export function ServiceAreasPage() {
     }
   };
 
+  // Google Maps Place Search / Geocoding for Add Area Modal
+  const handleSearchPlaceForModal = () => {
+    if (!placeQuery.trim()) return;
+    if (!(window as any).google?.maps) {
+      toast.error('Google Maps is still loading, please wait...');
+      return;
+    }
+
+    setSearchingPlace(true);
+    const gmaps = (window as any).google.maps;
+    const geocoder = new gmaps.Geocoder();
+
+    geocoder.geocode({ address: placeQuery.trim() }, (results: any, status: any) => {
+      setSearchingPlace(false);
+      if (status === 'OK' && results && results[0]) {
+        let postalCode = '';
+        let city = '';
+        let state = '';
+
+        results[0].address_components?.forEach((c: any) => {
+          if (c.types.includes('postal_code')) postalCode = c.long_name;
+          if (c.types.includes('locality') || c.types.includes('sublocality_level_1')) {
+            if (!city) city = c.long_name;
+          }
+          if (c.types.includes('administrative_area_level_2')) {
+            if (!city) city = c.long_name;
+          }
+          if (c.types.includes('administrative_area_level_1')) state = c.long_name;
+        });
+
+        const lat = results[0].geometry?.location?.lat()?.toFixed(6) || '';
+        const lng = results[0].geometry?.location?.lng()?.toFixed(6) || '';
+
+        setAreaForm(prev => ({
+          ...prev,
+          pincode: postalCode || prev.pincode,
+          city: city || prev.city || results[0].formatted_address.split(',')[0] || '',
+          state: state || prev.state || 'Uttar Pradesh',
+          latitude: lat || prev.latitude,
+          longitude: lng || prev.longitude,
+        }));
+
+        if (postalCode) {
+          toast.success(`Found Pincode ${postalCode} (${city || state})`);
+        } else {
+          toast.success(`Found coordinates: ${lat}, ${lng}. Please enter 6-digit pincode.`);
+        }
+      } else {
+        toast.error('Could not find location. Try entering full city or locality name.');
+      }
+    });
+  };
+
   // Save Service Area (Create / Update)
   const handleSaveArea = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -525,6 +580,7 @@ export function ServiceAreasPage() {
           <button
             onClick={() => {
               setEditingArea(null);
+              setPlaceQuery('');
               setAreaForm({
                 pincode: '',
                 city: '',
@@ -999,6 +1055,32 @@ export function ServiceAreasPage() {
                 className="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100"
               >
                 <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Quick Google Maps Location Search to Auto-Fill */}
+            <div className="bg-sky-50/80 border-b border-sky-100 p-3.5 flex items-center gap-2">
+              <Search className="w-4 h-4 text-sky-600 shrink-0" />
+              <input
+                type="text"
+                placeholder="Google Maps: search locality/area to auto-fill..."
+                value={placeQuery}
+                onChange={e => setPlaceQuery(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleSearchPlaceForModal();
+                  }
+                }}
+                className="flex-1 bg-white border border-sky-200 text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-gray-400"
+              />
+              <button
+                type="button"
+                onClick={handleSearchPlaceForModal}
+                disabled={searchingPlace || !placeQuery.trim()}
+                className="px-3 py-1.5 text-xs font-semibold bg-sky-600 hover:bg-sky-700 text-white rounded-lg transition disabled:opacity-50 shrink-0 flex items-center gap-1 shadow-sm"
+              >
+                {searchingPlace ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Auto-Fill'}
               </button>
             </div>
 

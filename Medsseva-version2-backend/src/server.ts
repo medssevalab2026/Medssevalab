@@ -5,7 +5,7 @@ validateEnv();
 import http from 'http';
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
-import app from './app';
+import app, { ALLOWED_ORIGINS } from './app';
 import { registerChatHandlers } from './socket/chatHandlers';
 import { env } from './config/env';
 import os from 'os';
@@ -17,7 +17,17 @@ const httpServer = http.createServer(app);
 
 export const io = new Server(httpServer, {
   cors: {
-    origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : ['http://localhost:5173'],
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (
+        ALLOWED_ORIGINS.includes(origin) ||
+        origin.endsWith('.vercel.app') ||
+        /^http:\/\/localhost:\d+$/.test(origin)
+      ) {
+        return callback(null, true);
+      }
+      callback(new Error(`CORS policy: origin ${origin} not allowed`));
+    },
     methods: ['GET', 'POST'],
     credentials: true,
   },

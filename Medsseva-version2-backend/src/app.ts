@@ -44,17 +44,16 @@ import { globalLimiter } from './middlewares/rateLimiter';
 import { errorHandler } from './middlewares/errorHandler';
 import { apiRequestLogger } from './middlewares/apiLogger';
 
-const DEFAULT_ORIGINS = [
+export const DEFAULT_ORIGINS = [
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175',
   'http://localhost:3000',
   'http://localhost:8081',
-  'https://medsseva-admin-dashboard.vercel.app',
-  'https://medsseva-version2-admin.vercel.app',
+  'https://medssevalab.vercel.app',
 ];
 
-const ALLOWED_ORIGINS = [
+export const ALLOWED_ORIGINS = [
   ...DEFAULT_ORIGINS,
   ...(process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())

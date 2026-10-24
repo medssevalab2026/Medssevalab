@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { useAppSelector } from '@/redux/hooks';
 import { useBookingsQuery } from '@/hooks/useAdminQueries';
 import { 
@@ -13,7 +14,9 @@ import {
   Sparkles,
   RefreshCw,
   Clock,
-  CheckCircle2
+  CheckCircle2,
+  Globe,
+  MapPin
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
 import { motion } from 'framer-motion';
@@ -461,11 +464,54 @@ export const DashboardPage: React.FC = () => {
     );
   };
 
+  const renderServiceAreasBanner = () => {
+    return (
+      <div className="mb-6 bg-gradient-to-r from-emerald-950 via-teal-900 to-slate-900 text-white rounded-2xl p-4 sm:p-5 shadow-lg border border-emerald-500/25 relative overflow-hidden">
+        <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-radial from-emerald-500/10 to-transparent pointer-events-none" />
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+          <div className="space-y-1.5 max-w-2xl">
+            <div className="flex items-center gap-2">
+              <span className="flex h-2 w-2 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-300 bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-400/30">
+                Service Areas & Geofencing System
+              </span>
+              <span className="text-xs text-emerald-200/70 hidden sm:inline">• Live DB & Mobile App Sync</span>
+            </div>
+            <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight flex items-center gap-2">
+              <Globe className="w-5 h-5 text-emerald-400 shrink-0" />
+              Manage Serviceable Pincodes & Google Map Geofencing
+            </h2>
+            <p className="text-xs sm:text-sm text-emerald-100/80 leading-relaxed">
+              Add or remove active pincodes to control mobile app availability. Only active pincodes in your database are serviceable on the MedsSeva user app; unconfigured areas are safely blocked.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0">
+            <Link
+              to="/service-areas"
+              className="inline-flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-4 py-2.5 rounded-xl text-xs sm:text-sm shadow-md transition-all active:scale-95"
+            >
+              <MapPin className="w-4 h-4" />
+              Open Service Areas & Map
+              <ChevronRight className="w-4 h-4" />
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="w-full">
       
       {/* Page Header with Time Range Preset Selector */}
       {renderRoleHeader()}
+
+      {/* Service Areas & Geofencing Quick Access Banner */}
+      {renderServiceAreasBanner()}
 
       {/* Analytical Counters Row */}
       {renderStatsWidgets()}

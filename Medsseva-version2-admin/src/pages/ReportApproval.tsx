@@ -906,7 +906,7 @@ const handleFinalize = async () => {
                   const patientMobile = item.mobile || selectedBooking?.patientMobile || selectedBooking?.user?.mobile || '';
                   const cleanMobile = patientMobile.replace(/[^0-9]/g, '');
                   const waNumber = cleanMobile.length === 10 ? `91${cleanMobile}` : cleanMobile;
-                  const baseUrl = window.location.hostname === 'localhost' ? 'https://medsseva-version2-admin.vercel.app' : window.location.origin;
+                  const baseUrl = window.location.hostname === 'localhost' ? 'https://medssevalab.vercel.app' : window.location.origin;
                   const verifyLink = `${baseUrl}/verify-report/${selectedReport?.id}`;
                   const pdfDownloadLink = selectedReport?.pdfUrl ? `\n\n📄 *Download Original Signed PDF:*\n${selectedReport.pdfUrl}` : '';
                   const bookingRef = selectedReport?.booking?.bookingCode || selectedReport?.id?.slice(0, 8);

@@ -2,8 +2,7 @@
   "expo": {
     "name": "MedsSeva",
     "slug": "medsseva-app",
-    "version": "1.0.9",
-    "newArchEnabled": true,
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/adaptive-icon.png",
     "scheme": "medssevaapp",
@@ -11,14 +10,16 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.medssevaglobal.app",
+      "config": {
+        "googleMapsApiKey": "AIzaSyAdezYYmmFzsMWzbSYkr1UtHBan7HitQK0"
+      },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.medssevaglobal.app",
-      "versionCode": 9,
-      "usesCleartextTraffic": true,
+      "versionCode": 10,
       "config": {
         "googleMaps": {
           "apiKey": "AIzaSyAdezYYmmFzsMWzbSYkr1UtHBan7HitQK0"
