@@ -2309,7 +2309,7 @@ export const sendOtp = async (req: Request, res: Response) => {
     }
 
     // 4. Generate and store OTP (invalidating previous OTP)
-    const otp = generateOtp(4);
+    const otp = generateOtp(6);
     const otpHash = await hashOtp(otp);
     const otpExpiresAt = getOtpExpiry();
     const now = new Date();

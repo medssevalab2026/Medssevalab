@@ -52,10 +52,10 @@ export default function PartnerLoginScreen() {
       }
 
       const firebaseResult = await firebaseAuthService.sendPhoneOtp(cleanMobile);
-      if (!firebaseResult.success || !firebaseResult.verificationId) {
-        setServerError(firebaseResult.error || 'Failed to send Firebase OTP. Please try again.');
-        setIsLoading(false);
-        return;
+      let verificationId = firebaseResult.verificationId || '';
+      if (!firebaseResult.success || !verificationId) {
+        console.warn('[AUTH] Firebase sendPhoneOtp failed for partner, using fallback OTP:', firebaseResult.error);
+        verificationId = 'backend-otp';
       }
 
       router.push({
@@ -63,7 +63,7 @@ export default function PartnerLoginScreen() {
         params: {
           mobile: cleanMobile,
           expectedRole: 'PATHOLOGY_PARTNER',
-          verificationId: firebaseResult.verificationId,
+          verificationId,
         },
       });
     } catch (error: any) {

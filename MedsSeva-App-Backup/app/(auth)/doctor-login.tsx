@@ -69,10 +69,10 @@ export default function DoctorLoginScreen() {
       }
 
       const firebaseResult = await firebaseAuthService.sendPhoneOtp(cleanMobile);
-      if (!firebaseResult.success || !firebaseResult.verificationId) {
-        setServerError(firebaseResult.error || 'Failed to send Firebase OTP. Please try again.');
-        setIsLoading(false);
-        return;
+      let verificationId = firebaseResult.verificationId || '';
+      if (!firebaseResult.success || !verificationId) {
+        console.warn('[AUTH] Firebase sendPhoneOtp failed for doctor, using fallback OTP:', firebaseResult.error);
+        verificationId = 'backend-otp';
       }
 
       router.push({
@@ -80,7 +80,7 @@ export default function DoctorLoginScreen() {
         params: {
           mobile: cleanMobile,
           expectedRole: 'DOCTOR',
-          verificationId: firebaseResult.verificationId,
+          verificationId,
         },
       });
     } catch (error: any) {

@@ -7,6 +7,7 @@ import {
   updateReportDraftThunk,
   verifyReportThunk,
   fetchAllReports,
+  uploadPregeneratedReportThunk,
 } from '../redux/slices/reportSlice';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -30,6 +31,10 @@ import {
   Sparkles,
   FileCheck,
   FlaskConical,
+  UploadCloud,
+  FileUp,
+  FileCheck2,
+  Paperclip,
 } from 'lucide-react';
 import { cn } from '../utils/cn';
 import { branchService, Branch } from '../services/branch.service';
@@ -317,6 +322,27 @@ export const ReportBuilderPage: React.FC = () => {
   const [testFilterQuery, setTestFilterQuery] = useState('');
   const [creatingWalkin, setCreatingWalkin] = useState(false);
   const [editingParam, setEditingParam] = useState<{ groupIdx: number; paramIdx: number } | null>(null);
+
+  // Pre-generated Report PDF Upload Modal State
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [uploadTargetMode, setUploadTargetMode] = useState<'existing' | 'walkin'>('existing');
+  const [uploadSelectedBooking, setUploadSelectedBooking] = useState<any>(null);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadingReport, setUploadingReport] = useState(false);
+  const [uploadSearchInput, setUploadSearchInput] = useState('');
+  const [uploadWalkin, setUploadWalkin] = useState({
+    patientName: '',
+    mobile: '',
+    gender: 'MALE',
+    age: '',
+    testName: '',
+    branchId: '',
+  });
+  const [uploadDoctorName, setUploadDoctorName] = useState('Dr. Aditya Tayal');
+  const [uploadDoctorQualification, setUploadDoctorQualification] = useState('MBBS, MD (Pathology)');
+  const [uploadDoctorRegNo, setUploadDoctorRegNo] = useState('UPMC-74128');
+  const [uploadTechnicianName, setUploadTechnicianName] = useState('Senior Lab Technician');
+  const [uploadRemarks, setUploadRemarks] = useState('Pre-generated External Laboratory Report');
 
   const currentReport = useMemo(() => {
     return reports.find((r: any) => r.bookingId === selectedBooking?.id) || selectedBooking?.report;
@@ -896,7 +922,77 @@ export const ReportBuilderPage: React.FC = () => {
     }
   };
 
-const filteredBookings = useMemo(() => {
+  const handleUploadPregeneratedReport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!uploadFile) {
+      toast.error('Missing File', 'Please select a PDF report file to upload.');
+      return;
+    }
+
+    if (uploadTargetMode === 'existing' && !uploadSelectedBooking?.id) {
+      toast.error('Missing Booking', 'Please select a patient / booking from the list.');
+      return;
+    }
+
+    if (uploadTargetMode === 'walkin') {
+      if (!uploadWalkin.patientName.trim()) {
+        toast.error('Missing Field', 'Patient Full Name is required.');
+        return;
+      }
+      if (!uploadWalkin.mobile || uploadWalkin.mobile.trim().length < 10) {
+        toast.error('Invalid Mobile', 'Valid 10-digit mobile number is required.');
+        return;
+      }
+    }
+
+    try {
+      setUploadingReport(true);
+      const formData = new FormData();
+      formData.append('pdf', uploadFile);
+
+      if (uploadTargetMode === 'existing') {
+        formData.append('bookingId', uploadSelectedBooking.id);
+      } else {
+        formData.append('patientName', uploadWalkin.patientName.trim());
+        formData.append('patientMobile', uploadWalkin.mobile.trim());
+        formData.append('patientGender', uploadWalkin.gender || 'OTHER');
+        if (uploadWalkin.age) formData.append('patientAge', uploadWalkin.age);
+        if (uploadWalkin.testName.trim()) formData.append('testName', uploadWalkin.testName.trim());
+        const bId = uploadWalkin.branchId || verification.reportBranchId || (branches[0]?.id || '');
+        if (bId) formData.append('branchId', bId);
+      }
+
+      formData.append('doctorName', uploadDoctorName.trim());
+      formData.append('doctorQualification', uploadDoctorQualification.trim());
+      formData.append('doctorRegNo', uploadDoctorRegNo.trim());
+      formData.append('technicianName', uploadTechnicianName.trim());
+      formData.append('clinicalNotes', uploadRemarks.trim());
+      formData.append('doctorRemarks', uploadRemarks.trim());
+
+      await dispatch(uploadPregeneratedReportThunk(formData)).unwrap();
+      toast.success('Report Published', 'Pre-generated report PDF uploaded & published! Patient can view it on MedsSeva app.');
+
+      setUploadModalOpen(false);
+      setUploadFile(null);
+
+      // Refresh data
+      await dispatch(fetchBookingsForReport());
+      await dispatch(fetchAllReports());
+
+      if (uploadTargetMode === 'existing' && uploadSelectedBooking) {
+        const updatedBooking = bookingsForReport.find((b: any) => b.id === uploadSelectedBooking.id);
+        if (updatedBooking) {
+          handleSelectBooking(updatedBooking);
+        }
+      }
+    } catch (err: any) {
+      toast.error('Upload Failed', typeof err === 'string' ? err : (err?.message || 'Failed to upload pre-generated report. Please try again.'));
+    } finally {
+      setUploadingReport(false);
+    }
+  };
+
+  const filteredBookings = useMemo(() => {
     const raw = searchQuery.trim().replace(/\s+/g, ' ').toLowerCase();
     if (!raw) return bookingsForReport;
     return bookingsForReport.filter((b: any) => {
@@ -937,6 +1033,17 @@ const filteredBookings = useMemo(() => {
           <p className="text-sm text-muted-foreground">Select a booking or register a walk-in patient, enter test values, and save as draft.</p>
         </div>
         <div className="flex items-center gap-2.5 flex-wrap">
+          <button
+            onClick={() => {
+              setUploadTargetMode('existing');
+              setUploadSelectedBooking(selectedBooking || null);
+              setUploadFile(null);
+              setUploadModalOpen(true);
+            }}
+            className="flex-1 sm:flex-initial px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold rounded-lg flex items-center justify-center gap-1.5 shadow-xs transition-colors"
+          >
+            <UploadCloud className="h-4 w-4" /> Upload Pre-Generated PDF
+          </button>
           <button
             onClick={() => { setModalTab('walkin'); setShowModal(true); }}
             className="flex-1 sm:flex-initial px-3.5 py-2 bg-card border border-primary/30 text-primary hover:bg-primary/5 text-xs sm:text-sm font-bold rounded-lg flex items-center justify-center gap-1.5 shadow-xs transition-colors"
@@ -1043,12 +1150,14 @@ const filteredBookings = useMemo(() => {
                     </div>
                   ) : (
                     bookingsWithoutReport.map((b: any) => (
-                      <button
+                      <div
                         key={b.id}
-                        onClick={() => handleSelectBooking(b)}
                         className="w-full text-left p-3.5 border border-border rounded-xl hover:border-primary/50 hover:bg-primary/5 transition-all flex items-center justify-between group"
                       >
-                        <div>
+                        <div
+                          className="flex-1 cursor-pointer pr-3"
+                          onClick={() => handleSelectBooking(b)}
+                        >
                           <div className="font-bold text-sm text-foreground group-hover:text-primary transition-colors">
                             {b.patientName}
                           </div>
@@ -1062,15 +1171,36 @@ const filteredBookings = useMemo(() => {
                             )}
                           </div>
                         </div>
-                        <div className="text-right">
+                        <div className="text-right flex flex-col items-end gap-1.5 shrink-0">
                           <div className="text-xs font-mono font-medium text-muted-foreground">
                             {b.patientMobile || b.user?.mobile}
                           </div>
-                          <span className="inline-block mt-2 text-xs font-bold text-primary opacity-0 group-hover:opacity-100 transition-opacity">
-                            Select →
-                          </span>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowModal(false);
+                                setUploadTargetMode('booking');
+                                setUploadSelectedBooking(b);
+                                setUploadModalOpen(true);
+                              }}
+                              className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 border border-emerald-500/30 flex items-center gap-1 transition-colors"
+                              title="Directly upload pre-generated external PDF for this patient"
+                            >
+                              <UploadCloud className="h-3 w-3" />
+                              <span>Upload PDF</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSelectBooking(b)}
+                              className="px-2.5 py-1 rounded-md text-xs font-bold text-primary hover:bg-primary/10 transition-colors"
+                            >
+                              Select →
+                            </button>
+                          </div>
                         </div>
-                      </button>
+                      </div>
                     ))
                   )}
                 </div>
@@ -1364,6 +1494,376 @@ const filteredBookings = useMemo(() => {
         </>
       )}
 
+      {/* MODAL: UPLOAD PRE-GENERATED PDF REPORT */}
+      {uploadModalOpen && (
+        <>
+          <div className="fixed inset-0 bg-black/60 z-50 backdrop-blur-xs" onClick={() => !uploadingReport && setUploadModalOpen(false)} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[95vw] sm:max-w-2xl bg-background border border-border rounded-2xl z-[60] shadow-2xl p-4 sm:p-6 space-y-4 sm:space-y-5 max-h-[92vh] overflow-y-auto">
+            
+            {/* Modal Header */}
+            <div className="flex items-start justify-between pb-3 border-b border-border">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+                    <UploadCloud className="h-5 w-5" />
+                  </span>
+                  <h2 className="text-base sm:text-lg font-bold text-foreground">
+                    Upload Pre-Generated Report (PDF)
+                  </h2>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Attach an existing PDF report from an external lab or platform. It will be immediately published & visible to the patient on the MedsSeva app.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUploadModalOpen(false)}
+                disabled={uploadingReport}
+                className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Target Patient Mode Switch */}
+            <div className="flex items-center gap-2 bg-muted/60 p-1 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setUploadTargetMode('existing')}
+                className={cn(
+                  "flex-1 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
+                  uploadTargetMode === 'existing'
+                    ? "bg-background text-foreground shadow-xs border border-border/50"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <ClipboardList className="h-3.5 w-3.5 text-primary" />
+                Existing Booking
+              </button>
+              <button
+                type="button"
+                onClick={() => setUploadTargetMode('walkin')}
+                className={cn(
+                  "flex-1 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
+                  uploadTargetMode === 'walkin'
+                    ? "bg-background text-foreground shadow-xs border border-border/50"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <UserPlus className="h-3.5 w-3.5 text-emerald-600" />
+                Direct / Walk-in Patient
+              </button>
+            </div>
+
+            <form onSubmit={handleUploadPregeneratedReport} className="space-y-4">
+              
+              {/* SECTION 1: Patient / Booking Details */}
+              {uploadTargetMode === 'existing' ? (
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-foreground block">
+                    Selected Patient & Booking <span className="text-destructive">*</span>
+                  </label>
+
+                  {uploadSelectedBooking ? (
+                    <div className="p-3 bg-primary/5 border border-primary/25 rounded-xl flex items-center justify-between gap-3">
+                      <div>
+                        <div className="font-bold text-sm text-foreground">
+                          {uploadSelectedBooking.patientName}
+                        </div>
+                        <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
+                          <span className="font-mono font-medium">{uploadSelectedBooking.bookingCode}</span>
+                          <span>•</span>
+                          <span>{uploadSelectedBooking.patientMobile || uploadSelectedBooking.user?.mobile}</span>
+                        </div>
+                        <div className="text-[11px] text-primary font-semibold mt-1">
+                          Test: {getBookingTestNames(uploadSelectedBooking)}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setUploadSelectedBooking(null)}
+                        className="px-2.5 py-1 text-xs border border-primary/40 bg-card hover:bg-muted rounded-lg font-bold text-primary shrink-0"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                        <input
+                          type="text"
+                          placeholder="Search patient name, booking code, mobile..."
+                          value={uploadSearchInput}
+                          onChange={e => setUploadSearchInput(e.target.value)}
+                          className="w-full pl-8 pr-3 py-1.5 text-xs border border-input rounded-lg bg-card outline-none focus:ring-1 focus:ring-primary"
+                        />
+                      </div>
+                      <div className="max-h-40 overflow-y-auto space-y-1.5 border border-border rounded-xl p-2 bg-muted/20">
+                        {bookingsForReport
+                          .filter((b: any) => {
+                            const q = uploadSearchInput.toLowerCase().trim();
+                            if (!q) return true;
+                            return (
+                              (b.patientName || '').toLowerCase().includes(q) ||
+                              (b.bookingCode || '').toLowerCase().includes(q) ||
+                              (b.patientMobile || '').includes(q) ||
+                              (b.user?.mobile || '').includes(q)
+                            );
+                          })
+                          .slice(0, 10)
+                          .map((b: any) => (
+                            <button
+                              key={b.id}
+                              type="button"
+                              onClick={() => setUploadSelectedBooking(b)}
+                              className="w-full text-left p-2 rounded-lg hover:bg-card border border-transparent hover:border-border transition-all flex items-center justify-between text-xs"
+                            >
+                              <div>
+                                <span className="font-bold text-foreground">{b.patientName}</span>
+                                <span className="font-mono text-muted-foreground text-[11px] ml-2">({b.bookingCode})</span>
+                                <div className="text-[10px] text-muted-foreground mt-0.5 truncate max-w-sm">
+                                  {getBookingTestNames(b)}
+                                </div>
+                              </div>
+                              <span className="text-[11px] font-bold text-primary shrink-0">Select →</span>
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Walk-in Form Fields */
+                <div className="space-y-3 p-3 bg-muted/30 rounded-xl border border-border">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-foreground block mb-1">
+                        Patient Name <span className="text-destructive">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Ramesh Chandra"
+                        value={uploadWalkin.patientName}
+                        onChange={e => setUploadWalkin(f => ({ ...f, patientName: e.target.value }))}
+                        className="w-full px-2.5 py-1.5 text-xs border border-input rounded-lg bg-card outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-foreground block mb-1">
+                        Mobile Number <span className="text-destructive">*</span>
+                      </label>
+                      <input
+                        type="tel"
+                        maxLength={10}
+                        placeholder="10-digit mobile"
+                        value={uploadWalkin.mobile}
+                        onChange={e => setUploadWalkin(f => ({ ...f, mobile: e.target.value.replace(/\D/g, '') }))}
+                        className="w-full px-2.5 py-1.5 text-xs border border-input rounded-lg bg-card outline-none focus:ring-1 focus:ring-primary font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-foreground block mb-1">Gender</label>
+                      <select
+                        value={uploadWalkin.gender}
+                        onChange={e => setUploadWalkin(f => ({ ...f, gender: e.target.value }))}
+                        className="w-full px-2.5 py-1.5 text-xs border border-input rounded-lg bg-card outline-none focus:ring-1 focus:ring-primary"
+                      >
+                        <option value="MALE">Male</option>
+                        <option value="FEMALE">Female</option>
+                        <option value="OTHER">Other</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-foreground block mb-1">Age (Years)</label>
+                      <input
+                        type="number"
+                        placeholder="e.g. 35"
+                        value={uploadWalkin.age}
+                        onChange={e => setUploadWalkin(f => ({ ...f, age: e.target.value }))}
+                        className="w-full px-2.5 py-1.5 text-xs border border-input rounded-lg bg-card outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="text-xs font-bold text-foreground block mb-1">Test / Investigation Name</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Complete Blood Count (CBC) & Thyroid Profile"
+                        value={uploadWalkin.testName}
+                        onChange={e => setUploadWalkin(f => ({ ...f, testName: e.target.value }))}
+                        className="w-full px-2.5 py-1.5 text-xs border border-input rounded-lg bg-card outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* SECTION 2: Drag & Drop PDF File Upload Box */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-foreground block">
+                  Select Existing PDF Report File <span className="text-destructive">*</span>
+                </label>
+
+                <div
+                  onClick={() => {
+                    const el = document.getElementById('pregenerated-pdf-input');
+                    if (el) el.click();
+                  }}
+                  className={cn(
+                    "border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-2",
+                    uploadFile
+                      ? "border-emerald-500 bg-emerald-500/5 hover:bg-emerald-500/10"
+                      : "border-border hover:border-emerald-500/50 hover:bg-muted/40"
+                  )}
+                >
+                  <input
+                    id="pregenerated-pdf-input"
+                    type="file"
+                    accept="application/pdf"
+                    className="hidden"
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+                          toast.error('Invalid File', 'Only PDF files are supported.');
+                          return;
+                        }
+                        setUploadFile(file);
+                      }
+                    }}
+                  />
+
+                  {uploadFile ? (
+                    <div className="flex items-center gap-3 w-full">
+                      <div className="p-2.5 rounded-lg bg-rose-500/10 text-rose-600 shrink-0">
+                        <FileText className="h-6 w-6" />
+                      </div>
+                      <div className="flex-1 text-left min-w-0">
+                        <div className="font-bold text-xs text-foreground truncate">{uploadFile.name}</div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {(uploadFile.size / (1024 * 1024)).toFixed(2)} MB • Ready for publication
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setUploadFile(null);
+                        }}
+                        className="px-2.5 py-1 text-[11px] font-bold text-destructive hover:bg-destructive/10 rounded-lg shrink-0"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="h-10 w-10 rounded-full bg-emerald-500/10 text-emerald-600 flex items-center justify-center">
+                        <UploadCloud className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <div className="font-bold text-xs text-foreground">
+                          Click to browse or drag & drop report PDF
+                        </div>
+                        <div className="text-[11px] text-muted-foreground mt-0.5">
+                          Supports Adobe PDF (.pdf) format up to 20MB
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* SECTION 3: Doctor & Lab Sign-off Details */}
+              <div className="space-y-2 p-3 bg-card border border-border rounded-xl">
+                <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <UserCheck className="h-3.5 w-3.5 text-primary" />
+                  Sign-off & Reporting Details
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                  <div>
+                    <label className="text-[11px] font-semibold text-muted-foreground block mb-0.5">Doctor / Pathologist Name</label>
+                    <input
+                      type="text"
+                      value={uploadDoctorName}
+                      onChange={e => setUploadDoctorName(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-input rounded-lg bg-background outline-none text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-muted-foreground block mb-0.5">Doctor Qualification</label>
+                    <input
+                      type="text"
+                      value={uploadDoctorQualification}
+                      onChange={e => setUploadDoctorQualification(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-input rounded-lg bg-background outline-none text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-muted-foreground block mb-0.5">Doctor Reg. No.</label>
+                    <input
+                      type="text"
+                      value={uploadDoctorRegNo}
+                      onChange={e => setUploadDoctorRegNo(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-input rounded-lg bg-background outline-none text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-muted-foreground block mb-0.5">Lab Technician Name</label>
+                    <input
+                      type="text"
+                      value={uploadTechnicianName}
+                      onChange={e => setUploadTechnicianName(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-input rounded-lg bg-background outline-none text-xs"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="text-[11px] font-semibold text-muted-foreground block mb-0.5">Internal Remarks / Reference</label>
+                    <input
+                      type="text"
+                      value={uploadRemarks}
+                      onChange={e => setUploadRemarks(e.target.value)}
+                      placeholder="e.g. Outsourced lab reference #, external barcode"
+                      className="w-full px-2.5 py-1.5 border border-input rounded-lg bg-background outline-none text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setUploadModalOpen(false)}
+                  disabled={uploadingReport}
+                  className="px-4 py-2 border border-border hover:bg-muted rounded-xl text-xs font-bold text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={uploadingReport || !uploadFile}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {uploadingReport ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Uploading & Publishing...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-4 w-4" />
+                      Upload & Publish Report PDF
+                    </>
+                  )}
+                </button>
+              </div>
+
+            </form>
+          </div>
+        </>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <div className="space-y-4">
           <h3 className="font-bold text-sm uppercase tracking-wider text-muted-foreground flex items-center gap-2"><ClipboardList className="h-4 w-4" /> Recent Drafts</h3>
@@ -1410,6 +1910,57 @@ const filteredBookings = useMemo(() => {
                       </div>
                     </div>
                   </div>
+
+                  {/* Pre-generated PDF Status & Direct Upload Bar */}
+                  {currentReport?.pdfUrl ? (
+                    <div className="mt-3.5 pt-3 border-t border-border flex flex-wrap items-center justify-between gap-2 bg-emerald-500/10 p-2.5 rounded-lg border border-emerald-500/20">
+                      <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">
+                        <FileCheck2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                        <span>Pre-generated PDF Report is published! Visible to patient in MedsSeva app.</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={currentReport.pdfUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2.5 py-1 text-xs font-bold text-emerald-700 dark:text-emerald-300 hover:underline flex items-center gap-1"
+                        >
+                          View PDF ↗
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUploadTargetMode('existing');
+                            setUploadSelectedBooking(selectedBooking);
+                            setUploadFile(null);
+                            setUploadModalOpen(true);
+                          }}
+                          className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-2xs"
+                        >
+                          Replace PDF
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-3.5 pt-3 border-t border-border flex flex-wrap items-center justify-between gap-2 bg-muted/30 p-2.5 rounded-lg">
+                      <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                        <FileUp className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                        Have an existing/external lab PDF report for this booking?
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUploadTargetMode('existing');
+                          setUploadSelectedBooking(selectedBooking);
+                          setUploadFile(null);
+                          setUploadModalOpen(true);
+                        }}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-xs flex items-center gap-1.5 transition-colors"
+                      >
+                        <UploadCloud className="h-3.5 w-3.5" /> Upload Pre-Generated PDF
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {testGroups.length === 0 && (

@@ -977,6 +977,249 @@ export const uploadReportPdf = async (req: AuthRequest, res: Response) => {
   }
 };
 
+export const uploadPregeneratedReport = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'PDF report file is required' });
+    }
+
+    const bookingId = req.params.bookingId || req.body.bookingId;
+    let targetBooking: any = null;
+
+    if (bookingId) {
+      targetBooking = await prisma.booking.findUnique({
+        where: { id: bookingId },
+        include: {
+          user: true,
+          branch: true,
+          tests: { include: { test: true } },
+          packages: { include: { package: true } },
+          report: true,
+        },
+      });
+
+      if (!targetBooking) {
+        return res.status(404).json({ error: 'Selected booking not found' });
+      }
+    } else {
+      // Direct / Walk-in patient creation
+      const { patientName, patientMobile, patientGender, patientAge, branchId } = req.body;
+      if (!patientName || !patientMobile) {
+        return res.status(400).json({ error: 'patientName and patientMobile are required when no booking is selected.' });
+      }
+
+      // Check if user exists with this mobile number or create user
+      let user = await prisma.user.findFirst({
+        where: { mobile: String(patientMobile).trim() },
+      });
+
+      if (!user) {
+        user = await prisma.user.create({
+          data: {
+            name: String(patientName).trim(),
+            mobile: String(patientMobile).trim(),
+            role: 'USER',
+          },
+        });
+      }
+
+      // Find or create address for booking
+      let userAddress = await prisma.address.findFirst({
+        where: { userId: user.id },
+      });
+
+      let defaultBranch = null;
+      if (branchId) {
+        defaultBranch = await prisma.branch.findUnique({ where: { id: branchId } });
+      }
+      if (!defaultBranch) {
+        defaultBranch = await prisma.branch.findFirst({ where: { isActive: true } });
+      }
+
+      if (!userAddress) {
+        userAddress = await prisma.address.create({
+          data: {
+            userId: user.id,
+            label: 'Home',
+            line1: defaultBranch?.line1 || 'Direct Walk-in',
+            city: defaultBranch?.city || 'Prayagraj',
+            state: defaultBranch?.state || 'Uttar Pradesh',
+            pincode: defaultBranch?.pincode || '211001',
+          },
+        });
+      }
+
+      const randomDigits = Math.floor(100000 + Math.random() * 900000);
+      const bookingCode = `DIR-${randomDigits}`;
+
+      targetBooking = await prisma.booking.create({
+        data: {
+          bookingCode,
+          userId: user.id,
+          scheduledDate: new Date(),
+          scheduledSlot: 'Direct Upload',
+          totalPaid: 0,
+          status: 'COMPLETED',
+          addressId: userAddress.id,
+          branchId: defaultBranch?.id,
+          patientName: String(patientName).trim(),
+          patientAge: patientAge ? Number(patientAge) : undefined,
+          patientGender: patientGender || 'OTHER',
+          patientMobile: String(patientMobile).trim(),
+          collectionMode: 'LAB',
+          paymentStatus: 'SUCCESS',
+        },
+        include: {
+          user: true,
+          branch: true,
+          tests: { include: { test: true } },
+          packages: { include: { package: true } },
+          report: true,
+        },
+      });
+    }
+
+    // Upload PDF to cloud storage
+    const { secure_url, public_id } = await uploadToCloudinary(
+      req.file.buffer,
+      req.file.originalname,
+      req.file.mimetype,
+      'medseva/reports'
+    );
+
+    // Compute test name
+    const testNames: string[] = [];
+    targetBooking.tests?.forEach((t: any) => { if (t.test?.name) testNames.push(t.test.name); });
+    targetBooking.packages?.forEach((p: any) => { if (p.package?.name) testNames.push(p.package.name); });
+    const computedTestName = req.body.testName?.trim() || testNames.join(', ') || 'Diagnostic Test Report';
+
+    const doctorName = req.body.doctorName?.trim() || 'Dr. Aditya Tayal';
+    const doctorQualification = req.body.doctorQualification?.trim() || 'MBBS, MD (Pathology)';
+    const doctorRegNo = req.body.doctorRegNo?.trim() || 'UPMC-74128';
+    const doctorDesignation = req.body.doctorDesignation?.trim() || 'Senior Consultant Pathologist';
+    const technicianName = req.body.technicianName?.trim() || 'Senior Lab Technician';
+    const technicianQualification = req.body.technicianQualification?.trim() || 'DMLT';
+    const clinicalNotes = req.body.clinicalNotes?.trim() || 'Pre-generated / External Laboratory Diagnostic Report';
+    const doctorRemarks = req.body.doctorRemarks?.trim() || 'External Diagnostic Report Verified & Published';
+    const reportBranchId = req.body.reportBranchId || targetBooking.branchId || null;
+
+    let savedReport: any = null;
+
+    if (targetBooking.report) {
+      savedReport = await prisma.report.update({
+        where: { id: targetBooking.report.id },
+        data: {
+          testName: computedTestName,
+          status: 'PUBLISHED',
+          pdfUrl: secure_url,
+          pdfPublicId: public_id,
+          pdfUploadedAt: new Date(),
+          verifiedAt: new Date(),
+          reportedDate: new Date(),
+          verifiedById: req.user.id,
+          doctorName,
+          doctorQualification,
+          doctorRegNo,
+          doctorDesignation,
+          technicianName,
+          technicianQualification,
+          clinicalNotes,
+          doctorRemarks,
+          reportBranchId: reportBranchId || targetBooking.report.reportBranchId,
+          auditLogs: {
+            create: {
+              action: 'PREGENERATED_PDF_UPLOADED',
+              performedBy: req.user.id,
+              details: `Uploaded pre-generated PDF report: ${req.file.originalname}`,
+            },
+          },
+        },
+        include: {
+          parameters: true,
+          reportBranch: true,
+          booking: {
+            include: {
+              user: { select: { id: true, name: true, mobile: true, email: true } },
+              branch: true,
+            },
+          },
+        },
+      });
+    } else {
+      savedReport = await prisma.report.create({
+        data: {
+          bookingId: targetBooking.id,
+          testName: computedTestName,
+          status: 'PUBLISHED',
+          pdfUrl: secure_url,
+          pdfPublicId: public_id,
+          pdfUploadedAt: new Date(),
+          verifiedAt: new Date(),
+          reportedDate: new Date(),
+          verifiedById: req.user.id,
+          doctorName,
+          doctorQualification,
+          doctorRegNo,
+          doctorDesignation,
+          technicianName,
+          technicianQualification,
+          clinicalNotes,
+          doctorRemarks,
+          reportBranchId,
+          auditLogs: {
+            create: {
+              action: 'PREGENERATED_PDF_UPLOADED',
+              performedBy: req.user.id,
+              details: `Created report with pre-generated PDF: ${req.file.originalname}`,
+            },
+          },
+        },
+        include: {
+          parameters: true,
+          reportBranch: true,
+          booking: {
+            include: {
+              user: { select: { id: true, name: true, mobile: true, email: true } },
+              branch: true,
+            },
+          },
+        },
+      });
+    }
+
+    // Update booking status to COMPLETED
+    await prisma.booking.update({
+      where: { id: targetBooking.id },
+      data: {
+        status: 'COMPLETED',
+      },
+    });
+
+    // Send push notification to patient
+    const targetUserId = targetBooking.userId;
+    if (targetUserId) {
+      sendNotificationToUser(
+        targetUserId,
+        'Report Ready & Available',
+        `Your diagnostic test report for ${computedTestName} is ready to view and download in your MedsSeva app profile.`,
+        'REPORT_READY',
+        { bookingId: targetBooking.id, reportId: savedReport.id }
+      ).catch(console.error);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Pre-generated report PDF uploaded & published successfully!',
+      report: savedReport,
+    });
+  } catch (error: any) {
+    console.error('Failed to upload pre-generated report:', error);
+    res.status(500).json({ error: 'Failed to upload pre-generated report', details: error.message });
+  }
+};
+
 export const getPublicReportVerification = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;

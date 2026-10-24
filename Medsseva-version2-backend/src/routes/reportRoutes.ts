@@ -11,6 +11,7 @@ import {
   getBookingsForReport,
   savePdfUrl,
   uploadReportPdf,
+  uploadPregeneratedReport,
   getPublicReportVerification,
 } from '../controllers/reportController';
 import { authenticate, authorizeRoles } from '../middlewares/authMiddleware';
@@ -25,6 +26,8 @@ router.get('/my-reports', authenticate, getMyReports);
 router.get('/bookings-for-report', authenticate, authorizeRoles('ADMIN', 'PATHOLOGIST', 'SUPER_ADMIN', 'PATHOLOGY_PARTNER'), getBookingsForReport);
 router.get('/', authenticate, authorizeRoles('ADMIN', 'PATHOLOGIST', 'SUPER_ADMIN', 'PATHOLOGY_PARTNER'), getAllReports);
 router.get('/:id', authenticate, getReportById);
+router.post('/upload-pregenerated', authenticate, authorizeRoles('ADMIN', 'PATHOLOGIST', 'SUPER_ADMIN', 'PATHOLOGY_PARTNER'), upload.single('pdf'), uploadPregeneratedReport);
+router.post('/bookings/:bookingId/upload-pregenerated', authenticate, authorizeRoles('ADMIN', 'PATHOLOGIST', 'SUPER_ADMIN', 'PATHOLOGY_PARTNER'), upload.single('pdf'), uploadPregeneratedReport);
 router.post('/', authenticate, authorizeRoles('ADMIN', 'PATHOLOGIST', 'SUPER_ADMIN', 'PATHOLOGY_PARTNER'), createReport);
 router.patch('/:id/draft', authenticate, authorizeRoles('ADMIN', 'PATHOLOGIST', 'SUPER_ADMIN', 'PATHOLOGY_PARTNER'), updateReportDraft);
 router.patch('/:id/verify', authenticate, authorizeRoles('ADMIN', 'PATHOLOGIST', 'SUPER_ADMIN', 'PATHOLOGY_PARTNER'), verifyReport);

@@ -100,6 +100,21 @@ export const uploadReportPdfThunk = createAsyncThunk('reports/uploadPdf', async 
     return rejectWithValue(e.response?.data?.error || 'Failed to upload report PDF');
   }
 });
+
+export const uploadPregeneratedReportThunk = createAsyncThunk(
+  'reports/uploadPregenerated',
+  async (formData: FormData, { rejectWithValue }) => {
+    try {
+      const res = await api.post('/reports/upload-pregenerated', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return res.data;
+    } catch (e: any) {
+      return rejectWithValue(e.response?.data?.error || 'Failed to upload pre-generated report');
+    }
+  }
+);
+
 const reportSlice = createSlice({
   name: 'reports',
   initialState,
@@ -125,13 +140,24 @@ const reportSlice = createSlice({
         const idx = state.reports.findIndex(r => r.id === action.payload.id);
         if (idx !== -1) state.reports[idx] = action.payload;
       })
-     .addCase(sendReportThunk.fulfilled, (state, action) => {
+      .addCase(sendReportThunk.fulfilled, (state, action) => {
         const idx = state.reports.findIndex(r => r.id === action.payload.id);
         if (idx !== -1) state.reports[idx] = action.payload;
       })
       .addCase(savePdfUrlThunk.fulfilled, (state, action) => {
         const idx = state.reports.findIndex(r => r.id === action.payload.id);
         if (idx !== -1) state.reports[idx] = action.payload;
+      })
+      .addCase(uploadPregeneratedReportThunk.fulfilled, (state, action) => {
+        const report = action.payload?.report || action.payload;
+        if (report) {
+          const idx = state.reports.findIndex(r => r.id === report.id || r.bookingId === report.bookingId);
+          if (idx !== -1) {
+            state.reports[idx] = report;
+          } else {
+            state.reports.unshift(report);
+          }
+        }
       });
   },
 });
