@@ -1042,7 +1042,7 @@ export const uploadPregeneratedReport = async (req: AuthRequest, res: Response) 
         userAddress = await prisma.address.create({
           data: {
             userId: user.id,
-            label: 'Home',
+            type: 'HOME',
             line1: defaultBranch?.line1 || 'Direct Walk-in',
             city: defaultBranch?.city || 'Prayagraj',
             state: defaultBranch?.state || 'Uttar Pradesh',
