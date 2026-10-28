@@ -123,57 +123,48 @@ export default function RegisterScreen() {
     setServerError(null);
 
     try {
-
       const checkRes = await apiService.checkMobile(data.mobile);
-
       if (checkRes?.exists) {
-
         setShowAccountSheet(true);
-
         return;
-
       }
 
-
+      // Generate backend OTP as fallback
+      try {
+        await apiService.sendOtp(data.mobile);
+      } catch (otpErr) {
+        console.warn('[AUTH] Backend sendOtp pre-call warning:', otpErr);
+      }
 
       const firebaseResult = await firebaseAuthService.sendPhoneOtp(data.mobile);
-
-      if (!firebaseResult.success || !firebaseResult.verificationId) {
-
-        setServerError(firebaseResult.error || 'Failed to send Firebase OTP. Please try again.');
-
-        return;
-
+      let verificationId = firebaseResult.verificationId || '';
+      if (!firebaseResult.success || !verificationId) {
+        console.warn('[AUTH] Firebase sendPhoneOtp failed for register, using backend OTP fallback:', firebaseResult.error);
+        verificationId = 'backend-otp';
       }
 
-
-
       router.push({
-
         pathname: '/(auth)/otp',
-
         params: {
-
           mobile: data.mobile,
-
-          verificationId: firebaseResult.verificationId,
-
+          verificationId,
           flow: 'register',
-
           name: data.name,
-
-          email: data.email,
-
+          email: data.email || '',
           referralCode: data.referralCode?.trim() || '',
-
         },
-
       });
-
     } catch (error: any) {
-
-      setServerError(error.response?.data?.error || 'Failed to start registration. Please try again.');
-
+      console.error('Register submit error:', error);
+      let errorMsg = error.response?.data?.error;
+      if (!errorMsg) {
+        if (!error.response || error.code === 'ECONNABORTED' || error.message?.includes('Network Error')) {
+          errorMsg = 'Server is waking up or network connection is slow. Please tap Continue again.';
+        } else {
+          errorMsg = 'Failed to start registration. Please try again.';
+        }
+      }
+      setServerError(errorMsg);
     } finally {
 
       setIsLoading(false);

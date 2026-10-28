@@ -22,6 +22,14 @@
           }
         },
         {
+          "client_id": "839294408960-3s0grlu5cu246ibvgg3e0u32esos9r9v.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.medssevaglobal.app",
+            "certificate_hash": "357e1d424cd27c6911247207dbd207f002afb5e1"
+          }
+        },
+        {
           "client_id": "839294408960-6totk3lm6fon5t3mic4r7oqemdt78arj.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {

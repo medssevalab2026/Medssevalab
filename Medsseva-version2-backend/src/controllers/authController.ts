@@ -476,21 +476,29 @@ export const register = async (req: Request, res: Response) => {
   try {
     const { name, email, mobile, referralCode } = req.body;
 
-    if (!name || !email || !mobile) {
-      return res.status(400).json({ error: 'name, email, and mobile are required' });
+    if (!name || !mobile) {
+      return res.status(400).json({ error: 'name and mobile are required' });
     }
 
+    const cleanEmail = email ? String(email).trim().toLowerCase() : null;
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (cleanEmail && !emailRegex.test(cleanEmail)) {
       return res.status(400).json({ error: 'Invalid email address format' });
     }
 
+    const cleanMobile = String(mobile).replace(/\D/g, '').slice(-10);
     const existingUser = await prisma.user.findFirst({
-      where: { OR: [{ mobile }, { email }] }
+      where: {
+        OR: [
+          { mobile: cleanMobile },
+          { mobile: String(mobile).trim() },
+          ...(cleanEmail ? [{ email: cleanEmail }] : []),
+        ]
+      }
     });
 
     if (existingUser) {
-      if (existingUser.mobile === mobile) {
+      if (existingUser.mobile === cleanMobile || existingUser.mobile === String(mobile).trim()) {
         return res.status(400).json({ error: 'Mobile number already registered. Please login instead.' });
       }
       return res.status(400).json({ error: 'Email already in use. Try a different email.' });
@@ -560,8 +568,6 @@ export const register = async (req: Request, res: Response) => {
       }
     }
 
-    const cleanMobile = String(mobile || '').replace(/\D/g, '').slice(-10);
-
     if (cleanMobile.length === 10) {
       try {
         const smsResult = await sendOtpSms(cleanMobile, otp);
@@ -579,9 +585,18 @@ export const register = async (req: Request, res: Response) => {
     const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
 
     res.status(201).json({
-      message: 'Registration initiated. Please verify your mobile number.',
-      requiresMobileVerification: true,
-      mobile,
+      message: 'Registration successful',
+      user: {
+        id: user.id,
+        name: user.name,
+        mobile: user.mobile,
+        email: user.email,
+        role: user.role,
+        uhid: user.uhid,
+        referralCode: user.referralCode,
+      },
+      token,
+      requiresMobileVerification: false,
     });
   } catch (error: any) {
     console.error('Registration error:', error);

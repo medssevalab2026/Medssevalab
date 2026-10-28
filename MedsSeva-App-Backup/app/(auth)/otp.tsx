@@ -325,14 +325,14 @@ export default function OTPScreen() {
               const name = asParam(paramName);
               const email = asParam(paramEmail);
               const referralCode = asParam(paramReferralCode);
-              if (!name || !email) {
+              if (!name) {
                 setOtpError('Registration details missing. Please go back and try again.');
                 setIsLoading(false);
                 return;
               }
               authResult = await apiService.registerWithFirebaseToken(fbVerify.idToken, {
                 name,
-                email,
+                email: email || undefined,
                 referralCode: referralCode || undefined,
               });
             } else {
@@ -340,13 +340,33 @@ export default function OTPScreen() {
             }
           }
         } catch (fbErr) {
-          console.warn('[AUTH] Firebase verify failed, attempting backend loginWithOtp fallback:', fbErr);
+          console.warn('[AUTH] Firebase verify failed, attempting backend fallback:', fbErr);
         }
       }
 
-      // Fallback: If Firebase failed or verificationId is backend-otp, use direct backend OTP login
+      // Fallback: If Firebase failed or verificationId is backend-otp, use direct backend OTP flow
       if (!authResult) {
-        authResult = await apiService.loginWithOtp(mobileNumber, otpValue);
+        if (isRegisterFlow) {
+          const name = asParam(paramName);
+          const email = asParam(paramEmail);
+          const referralCode = asParam(paramReferralCode);
+          if (!name) {
+            setOtpError('Registration details missing. Please go back and try again.');
+            setIsLoading(false);
+            return;
+          }
+          // Verify backend OTP first
+          await apiService.verifyOtp(mobileNumber, otpValue);
+          // Register user on backend
+          authResult = await apiService.register({
+            name,
+            email: email || undefined,
+            mobile: mobileNumber,
+            referralCode: referralCode || undefined,
+          });
+        } else {
+          authResult = await apiService.loginWithOtp(mobileNumber, otpValue);
+        }
       }
 
       const ok = await completeLogin(authResult);

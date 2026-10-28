@@ -90,7 +90,14 @@ export default function LoginScreen() {
       });
     } catch (error: any) {
       console.error('Check Mobile Error:', error);
-      const errorMsg = error.response?.data?.error || 'Failed to verify mobile number. Please try again.';
+      let errorMsg = error.response?.data?.error;
+      if (!errorMsg) {
+        if (!error.response || error.code === 'ECONNABORTED' || error.message?.includes('Network Error')) {
+          errorMsg = 'Server is waking up or network connection is slow. Please tap Continue again.';
+        } else {
+          errorMsg = 'Failed to verify mobile number. Please try again.';
+        }
+      }
       setServerError(errorMsg);
     } finally {
       setIsLoading(false);

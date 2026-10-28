@@ -26,6 +26,7 @@ const getBaseUrl = () => {
 
 const api = axios.create({
   baseURL: getBaseUrl(),
+  timeout: 45000,
   headers: {
     'Content-Type': 'application/json',
     'Bypass-Tunnel-Reminder': 'true'
@@ -46,6 +47,21 @@ api.interceptors.request.use(
     return config;
   },
   (error) => {
+    return Promise.reject(error);
+  }
+);
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const config = error?.config;
+    // Retry once if request timed out or failed due to network error (e.g. server waking up)
+    if (config && !config._retried && (!error.response || error.code === 'ECONNABORTED')) {
+      config._retried = true;
+      console.warn(`[API] Retrying request due to network/cold-start error: ${config.url}`);
+      await new Promise((r) => setTimeout(r, 2500));
+      return api(config);
+    }
     return Promise.reject(error);
   }
 );
